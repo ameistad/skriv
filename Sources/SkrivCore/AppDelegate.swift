@@ -75,6 +75,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         catch { showConfigurationError(error) }
     }
 
+    @objc private func showAbout(_ sender: Any?) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let credits = NSAttributedString(string: "View on GitHub", attributes: [
+            .link: URL(string: "https://github.com/ameistad/skriv")!,
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            .paragraphStyle: paragraph,
+        ])
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+    }
+
     private func showConfigurationError(_ error: Error, keepingDefaults: Bool = false) {
         let alert = NSAlert()
         alert.messageText = "Could Not Load Configuration"
@@ -87,7 +98,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
         let appMenu = submenu("Skriv", in: menu)
-        appMenu.addItem(withTitle: "About Skriv", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About Skriv", action: #selector(showAbout(_:)), keyEquivalent: "").target = self
         appMenu.addItem(withTitle: "Open Configuration…", action: #selector(openConfiguration(_:)), keyEquivalent: ",").target = self
         let reload = appMenu.addItem(withTitle: "Reload Configuration", action: #selector(reloadConfiguration(_:)), keyEquivalent: ",")
         reload.keyEquivalentModifierMask = [.command, .shift]
