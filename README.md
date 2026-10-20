@@ -6,6 +6,7 @@ A fast, lightweight macOS scratchpad with native text editing and a focused Vim 
 Built with Swift and AppKit, with no external dependencies.
 
 - Opens focused, maximized notes with a configurable global shortcut.
+- Centers writing in a responsive 72-character column, with word wrapping by default.
 - Dark by default, with Etterglød colors and optional Neovim settings import.
 - Vim motions, Visual selection, literal search, and native Find/Replace.
 - UTF-8 files, native undo, and explicit save/discard controls.

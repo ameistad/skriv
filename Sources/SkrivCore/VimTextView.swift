@@ -13,8 +13,31 @@ final class VimTextView: NSTextView {
     var expandTab = false
     var tabWidth = 8
     var shiftWidth = 8
+    var wrapsToWritingColumn = false {
+        didSet { updateWritingInsets() }
+    }
+    private var updatingWritingInsets = false
     private var exportedClipboardChangeCount: Int?
     private static let linewiseClipboardType = NSPasteboard.PasteboardType("no.skriv.linewise")
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateWritingInsets()
+    }
+
+    /// Keep the native editor and scrollbar full-width while centering the text.
+    /// Font-relative width preserves a readable measure when an imported font changes.
+    func updateWritingInsets() {
+        guard !updatingWritingInsets else { return }
+        updatingWritingInsets = true
+        defer { updatingWritingInsets = false }
+        let font = font ?? .monospacedSystemFont(ofSize: 16, weight: .regular)
+        let advance = ("0" as NSString).size(withAttributes: [.font: font]).width
+        let columnWidth = 72 * advance + 2 * (textContainer?.lineFragmentPadding ?? 0)
+        let horizontalInset = wrapsToWritingColumn ? max(24, (bounds.width - columnWidth) / 2) : 24
+        let inset = NSSize(width: horizontalInset, height: 24)
+        if textContainerInset != inset { textContainerInset = inset }
+    }
 
     override func keyDown(with event: NSEvent) {
         // Let the input manager finish/cancel composition before interpreting Vim keys.

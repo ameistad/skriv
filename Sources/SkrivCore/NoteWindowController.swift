@@ -212,7 +212,7 @@ final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSText
         textView.tabWidth = settings.tabstop
         textView.shiftWidth = settings.shiftwidth == 0 ? settings.tabstop : settings.shiftwidth
         let style = NSMutableParagraphStyle()
-        style.lineBreakMode = settings.linebreak ? .byWordWrapping : .byCharWrapping
+        style.lineBreakMode = (imported?.linebreak ?? true) ? .byWordWrapping : .byCharWrapping
         let advance = (" " as NSString).size(withAttributes: [.font: textView.font!]).width
         style.tabStops = []
         style.defaultTabInterval = CGFloat(settings.tabstop) * advance
@@ -225,6 +225,7 @@ final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSText
         textView.isHorizontallyResizable = !settings.wrap
         textView.autoresizingMask = settings.wrap ? [.width] : []
         textView.textContainer?.widthTracksTextView = settings.wrap
+        textView.wrapsToWritingColumn = settings.wrap
         textView.textContainer?.containerSize = NSSize(
             width: settings.wrap ? scrollView.contentSize.width : CGFloat.greatestFiniteMagnitude,
             height: CGFloat.greatestFiniteMagnitude)
@@ -240,6 +241,7 @@ final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSText
         numberRuler?.editorBackground = settings.lineNr.background.map(EditorTheme.color) ?? background
         scrollView.hasVerticalRuler = showNumbers
         scrollView.rulersVisible = showNumbers
+        textView.updateWritingInsets()
         textView.needsDisplay = true
     }
 

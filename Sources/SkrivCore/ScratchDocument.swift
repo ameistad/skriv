@@ -41,7 +41,9 @@ public final class ScratchDocument: NSDocument {
         alert.informativeText = "Your changes will be lost if you don’t save them."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Don’t Save")
+        let dontSave = alert.addButton(withTitle: "Don’t Save")
+        dontSave.keyEquivalent = "d"
+        dontSave.keyEquivalentModifierMask = [.command]
         if let window = windowForSheet {
             alert.beginSheetModal(for: window) { [weak self] response in
                 self?.resolveClose(response)

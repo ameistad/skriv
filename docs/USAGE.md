@@ -31,10 +31,16 @@ The source mark is from [Streamline](https://streamlinehq.com).
   and ready to type in **INSERT** mode. The mode is shown at the bottom.
 - Dark appearance and the built-in Etterglød (`etterglod.nvim`) plain-text
   palette are the defaults, independently of macOS appearance or a Neovim install.
+- Writing uses a centered column approximately 72 characters wide in the current
+  font, shrinking to fit smaller windows with at least 24 points of side padding.
+  Built-in settings wrap at word boundaries. Wrapping changes only presentation,
+  never the saved text. Imported `wrap` / `linebreak` settings are respected;
+  disabling wrapping restores horizontal scrolling. Writing width is currently
+  a built-in default, not a user preference.
 - `⌘N` creates a note; `⌘O` opens UTF-8 text; `⌘S` saves; `⇧⌘S` saves under a
   new name. Unsupported encodings produce an error rather than replacing text.
 - `⌘W` closes, protecting unsaved changes with a native prompt.
-  Edited notes offer **Save**, **Cancel**, and **Don’t Save**. The save panel
+  Edited notes offer **Save**, **Cancel**, and **Don’t Save** (`⌘D`). The save panel
   appears only after choosing Save; Don’t Save never deletes an existing file.
   **File → Discard Note…** discards changes after confirmation; it never deletes
   a previously saved file. `⌘Q` prompts for unsaved notes before quitting.
