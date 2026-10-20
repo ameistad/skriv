@@ -13,6 +13,20 @@ extension String {
     }
 }
 
+extension RandomAccessCollection where Index == Int {
+    /// First index whose element fails `isBefore`, for a collection partitioned by it.
+    /// Lives here because the conformance and benchmark scripts compile this file alone.
+    func partitionIndex(where isBefore: (Element) -> Bool) -> Int {
+        var low = startIndex
+        var high = endIndex
+        while low < high {
+            let middle = (low + high) / 2
+            if isBefore(self[middle]) { low = middle + 1 } else { high = middle }
+        }
+        return low
+    }
+}
+
 /// The deliberately small native Vim subset. Offsets crossing the AppKit boundary are UTF-16;
 /// editing and motion calculations use extended grapheme clusters, never Unicode scalars.
 enum VimEffect: Equatable {
@@ -40,7 +54,7 @@ struct VimEngine {
     private(set) var mode: Mode = .insert
     private(set) var register = Register(text: "", linewise: false)
     private(set) var registerGeneration: UInt = 0
-    private var digits = ""
+    private var pendingCount: Int?
     private var operation: String?
     private var operationCount = 1
     private var operationHasCount = false
@@ -74,12 +88,12 @@ struct VimEngine {
         register = Register(text: text, linewise: linewise)
     }
 
-    mutating func handle(_ input: String, text: String, caret: Int, visualMotion: Bool = false) -> VimEffect {
-        if mode.isVisual { return handleVisual(input, text: text) }
-        guard mode == .normal || input == "<Esc>" else { return .passThrough }
+    mutating func handle(_ key: String, text: String, caret: Int) -> VimEffect {
+        if mode.isVisual { return handleVisual(key, text: text) }
+        guard mode == .normal || key == "<Esc>" else { return .passThrough }
         let b = buffer(for: text)
         let position = b.index(at: caret)
-        if input == "<Esc>" {
+        if key == "<Esc>" {
             let wasInsert = mode == .insert
             mode = .normal
             clearPending()
@@ -88,27 +102,10 @@ struct VimEngine {
             return .move(b.offset(b.normal(wasInsert && position > line.start ? position - 1 : position)))
         }
         guard mode == .normal else { return .passThrough }
-        let key = ["<Left>": "h", "<Right>": "l", "<Up>": "k", "<Down>": "j"][input] ?? input
-        let i = visualMotion ? position : b.normal(position)
-        if key.count == 1, let n = key.first?.wholeNumberValue, n < 10,
-           n > 0 || !digits.isEmpty {
-            digits = String(min(10_000, (Int(digits) ?? 0) * 10 + n))
-            return .handled
-        }
-        let count = Int(digits) ?? 1
-        let explicitCount = !digits.isEmpty
-        digits = ""
-        if awaitingG {
-            awaitingG = false
-            guard key == "g" else { clearPending(); return .handled }
-            return executeMotion("gg", count: count, explicitCount: explicitCount, b: b, i: i, visual: visualMotion)
-        }
-        if key == "g" {
-            awaitingG = true
-            // Keep a leading count until the second g arrives.
-            if explicitCount { digits = String(count) }
-            return .handled
-        }
+        let i = b.normal(position)
+        if accumulateCount(key) { return .handled }
+        let (count, explicitCount) = takeCount()
+        if let effect = motion(key, count: count, explicitCount: explicitCount, b: b, i: i, visual: false) { return effect }
         if let op = operation, key == op {
             let total = min(10_000, operationCount * count)
             clearPending()
@@ -116,9 +113,6 @@ struct VimEngine {
             if total > 1 && b.lineNumber(at: i) == b.lines.count - 1 { return .move(b.offset(i)) }
             let effect = lineOperation(op, b: b, first: b.lineNumber(at: i), last: b.lineNumber(at: i) + total - 1)
             return op == "y" ? .move(b.offset(i)) : effect
-        }
-        if ["h", "j", "k", "l", "0", "^", "$", "w", "b", "e", "W", "B", "E", "G"].contains(key) {
-            return executeMotion(key, count: count, explicitCount: explicitCount, b: b, i: i, visual: visualMotion)
         }
         if operation != nil { clearPending(); return .handled }
         desiredColumn = nil
@@ -193,19 +187,47 @@ struct VimEngine {
             let effect = characterOperation(op, b: b, lower: min(anchor, head), upper: min(b.characters.count, max(anchor, head) + 1))
             return op == "y" ? .move(b.offset(b.normal(min(anchor, head)))) : effect
         }
-        let motionKeys = ["h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "^", "$", "g", "G",
-                          "<Left>", "<Right>", "<Up>", "<Down>"]
-        let digit = key.count == 1 && key.first?.wholeNumberValue != nil
-        guard motionKeys.contains(key) || digit else {
+        if accumulateCount(key) { return .handled }
+        let (count, explicitCount) = takeCount()
+        guard let effect = motion(key, count: count, explicitCount: explicitCount, b: b, i: head, visual: true) else {
             clearPending()
             return .handled
         }
-        let visualMode = mode
-        mode = .normal
-        let effect = handle(key, text: text, caret: visualCaret, visualMotion: true)
-        mode = visualMode
         if case .move(let next) = effect { visualCaret = next }
         return visualSelection(b)
+    }
+
+    private static let arrowAliases = ["<Left>": "h", "<Right>": "l", "<Up>": "k", "<Down>": "j"]
+    private static let motionKeys: Set = ["h", "j", "k", "l", "0", "^", "$", "w", "b", "e", "W", "B", "E", "G"]
+
+    /// Absorbs a count digit. A leading zero is the line-start motion, not a count.
+    private mutating func accumulateCount(_ key: String) -> Bool {
+        guard key.count == 1, let n = key.first?.wholeNumberValue, n < 10, n > 0 || pendingCount != nil else { return false }
+        pendingCount = min(10_000, (pendingCount ?? 0) * 10 + n)
+        return true
+    }
+
+    private mutating func takeCount() -> (count: Int, explicit: Bool) {
+        defer { pendingCount = nil }
+        return (pendingCount ?? 1, pendingCount != nil)
+    }
+
+    /// Motions and the `g` prefix, shared by Normal and Visual modes. Returns nil for any other key.
+    private mutating func motion(_ input: String, count: Int, explicitCount: Bool, b: Buffer, i: Int, visual: Bool) -> VimEffect? {
+        let key = Self.arrowAliases[input] ?? input
+        if awaitingG {
+            awaitingG = false
+            guard key == "g" else { clearPending(); return .handled }
+            return executeMotion("gg", count: count, explicitCount: explicitCount, b: b, i: i, visual: visual)
+        }
+        if key == "g" {
+            awaitingG = true
+            // Keep a leading count until the second g arrives.
+            if explicitCount { pendingCount = count }
+            return .handled
+        }
+        guard Self.motionKeys.contains(key) else { return nil }
+        return executeMotion(key, count: count, explicitCount: explicitCount, b: b, i: i, visual: visual)
     }
 
     private func visualSelection(_ b: Buffer) -> VimEffect {
@@ -226,7 +248,7 @@ struct VimEngine {
     }
 
     private mutating func clearPending() {
-        digits = ""
+        pendingCount = nil
         operation = nil
         operationCount = 1
         operationHasCount = false
@@ -238,7 +260,7 @@ struct VimEngine {
         registerGeneration &+= 1
     }
 
-    private mutating func executeMotion(_ key: String, count: Int, explicitCount: Bool, b: Buffer, i: Int, visual: Bool = false) -> VimEffect {
+    private mutating func executeMotion(_ key: String, count: Int, explicitCount: Bool, b: Buffer, i: Int, visual: Bool) -> VimEffect {
         let op = operation
         let total = min(10_000, operationCount * count)
         let lineIndex = b.lineNumber(at: i)
@@ -391,24 +413,8 @@ struct VimEngine {
         }
 
         func offset(_ index: Int) -> Int { offsets[min(max(0, index), characters.count)] }
-        func index(at offset: Int) -> Int {
-            var lower = 0
-            var upper = offsets.count
-            while lower < upper {
-                let middle = (lower + upper) / 2
-                if offsets[middle] <= offset { lower = middle + 1 } else { upper = middle }
-            }
-            return max(0, lower - 1)
-        }
-        func lineNumber(at i: Int) -> Int {
-            var lower = 0
-            var upper = lines.count
-            while lower < upper {
-                let middle = (lower + upper) / 2
-                if lines[middle].start <= i { lower = middle + 1 } else { upper = middle }
-            }
-            return max(0, lower - 1)
-        }
+        func index(at offset: Int) -> Int { max(0, offsets.partitionIndex { $0 <= offset } - 1) }
+        func lineNumber(at i: Int) -> Int { max(0, lines.partitionIndex { $0.start <= i } - 1) }
         func line(at i: Int) -> Line { lines[lineNumber(at: i)] }
         func normal(_ i: Int) -> Int {
             let i = min(max(0, i), characters.count)

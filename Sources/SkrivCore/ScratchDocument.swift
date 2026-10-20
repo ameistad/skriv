@@ -18,12 +18,9 @@ public final class ScratchDocument: NSDocument {
     public override class var readableTypes: [String] { [typeName] }
     public override class var writableTypes: [String] { [typeName] }
 
-    public override class func canConcurrentlyReadDocuments(ofType typeName: String) -> Bool {
-        false
-    }
-
     public override func makeWindowControllers() {
-        addWindowController(NoteWindowController(document: self))
+        let settings = (NSDocumentController.shared as? ScratchDocumentController)?.currentSettings
+        addWindowController(NoteWindowController(document: self, settings: settings))
     }
 
     public override func canClose(withDelegate delegate: Any, shouldClose shouldCloseSelector: Selector?,
@@ -84,7 +81,7 @@ public final class ScratchDocument: NSDocument {
         guard let text = String(data: data, encoding: .utf8) else {
             throw CocoaError(.fileReadInapplicableStringEncoding)
         }
-        // AppKit reads on the main thread because concurrent reading is disabled.
+        // AppKit reads on the main thread because concurrent reading is off (the NSDocument default).
         MainActor.assumeIsolated {
             textStorage.replaceCharacters(in: NSRange(location: 0, length: textStorage.length), with: text)
         }

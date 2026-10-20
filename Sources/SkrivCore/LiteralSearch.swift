@@ -50,14 +50,7 @@ struct LiteralSearch {
         let steps = max(1, count) - 1
         // Find the first start greater than the caret (forward), or greater
         // than/equal to it (backward). Repeats no longer rescan the match list.
-        var low = 0
-        var high = matches.count
-        while low < high {
-            let middle = (low + high) / 2
-            if forward ? matches[middle].location <= caret : matches[middle].location < caret {
-                low = middle + 1
-            } else { high = middle }
-        }
+        let low = matches.partitionIndex { forward ? $0.location <= caret : $0.location < caret }
         if forward {
             let index = (low % matches.count + steps % matches.count) % matches.count
             return Match(range: matches[index], wrapped: steps >= matches.count - low)

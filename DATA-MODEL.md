@@ -25,7 +25,7 @@
 - `settings.normal`, `visual`, `cursor`, `lineNr`: resolved optional 24-bit RGB `foreground`/`background`. Missing channels use Skriv's bundled defaults.
 - `number`, `relativenumber`, `wrap`, `linebreak`, `expandtab`: resolved Boolean options.
 - `tabstop`: tab width, 1–9999; `shiftwidth`: indentation width, 0–9999, where zero means tabstop.
-- `guifont`: resolved Neovim GUI font string; `mapleader`: resolved leader for reporting, not an additional shortcut source.
+- `guifont`: resolved Neovim GUI font string.
 - `normalKeyMappings`: explicitly supported nonrecursive one-key Normal-mode translations. The editor applies each translation once. Mappings with prefix conflicts, callbacks, expressions, other modes or unsupported commands are excluded.
 - `unsupportedMappings`, `warnings`: import report strings, not executable commands.
 - Failure semantics: missing, corrupt, oversize, invalid or unknown-version caches use bundled defaults. A failed import preserves the prior cache and current settings. No configuration is resolved during note opening.

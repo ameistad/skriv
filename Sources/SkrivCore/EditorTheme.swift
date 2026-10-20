@@ -2,7 +2,6 @@ import AppKit
 
 /// Built-in plain-text colors from ameistad/etterglod.nvim.
 /// Keep this palette available without loading Neovim or reading user configuration.
-/// The Neovim settings importer will supply resolved overrides in phase 3.
 @MainActor
 enum EditorTheme {
     static let background = color(0x1E1E1E)          // Normal.bg

@@ -2,7 +2,6 @@ import AppKit
 
 @MainActor
 final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSTextFieldDelegate {
-    static var currentSettings: NeovimSettings?
     let textView: VimTextView
     private let scrollView: NSScrollView
     private let modeLabel = NSTextField(labelWithString: "INSERT")
@@ -15,7 +14,7 @@ final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSText
     private var searchForward = true
     private var searchCount = 1
 
-    init(document: ScratchDocument) {
+    init(document: ScratchDocument, settings: NeovimSettings?) {
         LaunchMetrics.shared.markPhase("beforeWindow")
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1000, height: 700)
@@ -107,7 +106,7 @@ final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSText
             guard let self else { return }
             self.modeLabel.stringValue = self.textView.engine.mode.label + (message.isEmpty ? "" : " — " + message)
         }
-        applySettings(Self.currentSettings)
+        applySettings(settings)
         LaunchMetrics.shared.markPhase("settings")
     }
 

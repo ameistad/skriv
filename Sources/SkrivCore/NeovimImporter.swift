@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 
-enum NeovimImportError: LocalizedError {
+enum NeovimImportError: LocalizedError, Equatable {
     case unavailable, timedOut, outputTooLarge, invalidSettings
     case failed(String)
 
@@ -59,40 +59,31 @@ struct NeovimImporter: Sendable {
         // Avoid resolving project-local configuration from whichever folder launched the app.
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         process.standardInput = FileHandle.nullDevice
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        let log = BoundedImportLog()
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty { log.append(data) }
-        }
+        // Settings arrive through the output file; stdout carries nothing Skriv needs.
+        process.standardOutput = FileHandle.nullDevice
+        let errors = Pipe()
+        process.standardError = errors
+        let log = ImportErrorLog()
+        // Drain continuously so a noisy configuration cannot block on a full pipe.
+        errors.fileHandleForReading.readabilityHandler = { handle in log.append(handle.availableData) }
         defer {
-            pipe.fileHandleForReading.readabilityHandler = nil
-            try? pipe.fileHandleForReading.close()
-            try? pipe.fileHandleForWriting.close()
+            errors.fileHandleForReading.readabilityHandler = nil
+            try? errors.fileHandleForReading.close()
+            try? errors.fileHandleForWriting.close()
         }
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         try process.run()
-        let deadline = ProcessInfo.processInfo.systemUptime + timeout
-        while process.isRunning {
-            if ProcessInfo.processInfo.systemUptime > deadline || log.overflowed {
-                process.terminate()
-                let terminateDeadline = ProcessInfo.processInfo.systemUptime + 0.3
-                while process.isRunning && ProcessInfo.processInfo.systemUptime < terminateDeadline {
-                    Thread.sleep(forTimeInterval: 0.01)
-                }
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                process.waitUntilExit()
-                throw log.overflowed ? NeovimImportError.outputTooLarge : NeovimImportError.timedOut
-            }
-            Thread.sleep(forTimeInterval: 0.02)
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            if exited.wait(timeout: .now() + 0.3) == .timedOut { kill(process.processIdentifier, SIGKILL) }
+            process.waitUntilExit()
+            throw NeovimImportError.timedOut
         }
-        guard !log.overflowed else { throw NeovimImportError.outputTooLarge }
+        process.waitUntilExit()
         guard process.terminationStatus == 0 else {
             throw NeovimImportError.failed(log.text.isEmpty ? "Neovim exited with status \(process.terminationStatus)." : log.text)
         }
-        guard let size = try? output.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-              size <= NeovimSettingsCache.maximumBytes else { throw NeovimImportError.invalidSettings }
         return try Self.decode(Data(contentsOf: output))
     }
 
@@ -119,7 +110,6 @@ struct NeovimImporter: Sendable {
         var tabstop: Int
         var shiftwidth: Int
         var guifont: String
-        var mapleader: String
         var mappings: [Mapping]
         var warnings: [String]
     }
@@ -133,10 +123,9 @@ struct NeovimImporter: Sendable {
             normal: raw.normal, visual: raw.visual, cursor: raw.cursor, lineNr: raw.lineNr,
             number: raw.number, relativenumber: raw.relativenumber, wrap: raw.wrap,
             linebreak: raw.linebreak, expandtab: raw.expandtab, tabstop: raw.tabstop,
-            shiftwidth: raw.shiftwidth, guifont: raw.guifont, mapleader: raw.mapleader,
-            warnings: raw.warnings
+            shiftwidth: raw.shiftwidth, guifont: raw.guifont, warnings: raw.warnings
         )
-        guard raw.mappings.count <= 8192 else { throw NeovimImportError.outputTooLarge }
+        let digits = Set("0123456789".map(String.init))
         for mapping in raw.mappings {
             let reason: String?
             if mapping.callback { reason = "Lua callback" }
@@ -146,7 +135,7 @@ struct NeovimImporter: Sendable {
             else if !mapping.noremap { reason = "recursive mapping" }
             else if mapping.lhs.count != 1 || mapping.lhs.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) {
                 reason = "key sequence or special key"
-            } else if Set("0123456789".map(String.init)).contains(mapping.lhs) {
+            } else if digits.contains(mapping.lhs) {
                 reason = "count key"
             } else if !NeovimSettings.supportedNormalTargets.contains(mapping.rhs) {
                 reason = "unsupported command or key sequence"
@@ -187,8 +176,7 @@ struct NeovimImporter: Sendable {
         number=vim.o.number, relativenumber=vim.o.relativenumber,
         wrap=vim.o.wrap, linebreak=vim.o.linebreak, expandtab=vim.o.expandtab,
         tabstop=vim.o.tabstop, shiftwidth=vim.o.shiftwidth,
-        guifont=vim.o.guifont, mapleader=tostring(vim.g.mapleader or '\\'),
-        mappings={}, warnings={},
+        guifont=vim.o.guifont, mappings={}, warnings={},
       }
       for _, mode in ipairs({'n','i','v','x','s','o','c','t'}) do
         for _, buffer in ipairs({false, true}) do
@@ -219,19 +207,13 @@ struct NeovimImporter: Sendable {
     """#
 }
 
-/// A bounded drain prevents a noisy configuration from blocking its own stdout pipe.
-private final class BoundedImportLog: @unchecked Sendable {
+/// Keeps the first 4 KiB of stderr for the failure alert and discards the rest.
+private final class ImportErrorLog: @unchecked Sendable {
     private let lock = NSLock()
     private var bytes = Data()
-    private var exceeded = false
-    var overflowed: Bool { lock.withLock { exceeded } }
-    var text: String { lock.withLock { String(decoding: bytes.prefix(4096), as: UTF8.self) } }
+    var text: String { lock.withLock { String(decoding: bytes, as: UTF8.self) } }
 
     func append(_ data: Data) {
-        lock.withLock {
-            let remaining = NeovimSettingsCache.maximumBytes - bytes.count
-            if data.count > remaining { exceeded = true }
-            bytes.append(data.prefix(max(0, remaining)))
-        }
+        lock.withLock { bytes.append(data.prefix(max(0, 4096 - bytes.count))) }
     }
 }

@@ -11,10 +11,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
-        NoteWindowController.currentSettings = settingsImport.settings
-        settingsImport.onChange = { settings in
-            NoteWindowController.currentSettings = settings
-            for document in NSDocumentController.shared.documents {
+        documents.currentSettings = settingsImport.settings
+        settingsImport.onChange = { [documents] settings in
+            documents.currentSettings = settings
+            for document in documents.documents {
                 for controller in document.windowControllers {
                     (controller as? NoteWindowController)?.applySettings(settings)
                 }
@@ -29,12 +29,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             documents.newDocument(nil)
         }
         NSApp.activate(ignoringOtherApps: true)
-        if let note = documents.documents.first?.windowControllers.first as? NoteWindowController {
-            note.window?.makeFirstResponder(note.textView)
-            LaunchMetrics.shared.markInputReady()
-            note.window?.displayIfNeeded()
-            LaunchMetrics.shared.markDisplaySubmitted()
-        }
         if !LaunchBenchmark.isRequested {
             do { try globalShortcut.apply(shortcutPreferences.configuration) }
             catch {
@@ -151,6 +145,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 final class ScratchDocumentController: NSDocumentController {
+    /// Applied to every new note; nil means the built-in editor settings.
+    var currentSettings: NeovimSettings?
+
     override var defaultType: String? { ScratchDocument.typeName }
 
     override func documentClass(forType typeName: String) -> AnyClass? {

@@ -41,7 +41,8 @@ final class LineNumberRuler: NSRulerView {
         while start < text.length {
             let end = NSMaxRange(text.lineRange(for: NSRange(location: start, length: 0)))
             guard end > start else { break }
-            if end < text.length || text.substring(from: max(0, end - 1)).hasSuffix("\n") {
+            // A newline-terminated final line is followed by one more, empty, numbered line.
+            if end < text.length || text.character(at: end - 1) == 0x0A {
                 lineStarts.append(end)
             }
             start = end
@@ -62,13 +63,7 @@ final class LineNumberRuler: NSRulerView {
     }
 
     private func lineIndex(at offset: Int) -> Int {
-        var low = 0
-        var high = lineStarts.count
-        while low < high {
-            let mid = (low + high) / 2
-            if lineStarts[mid] <= offset { low = mid + 1 } else { high = mid }
-        }
-        return max(0, low - 1)
+        max(0, lineStarts.partitionIndex { $0 <= offset } - 1)
     }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
