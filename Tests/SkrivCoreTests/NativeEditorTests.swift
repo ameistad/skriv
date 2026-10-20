@@ -76,20 +76,20 @@ struct NativeEditorTests {
         #expect(view.engine.mode == .normal)
     }
 
-    @Test func importedPresentationDoesNotMarkSavedDocumentEdited() throws {
+    @Test func configuredPresentationDoesNotMarkSavedDocumentEdited() throws {
         let (document, controller) = try editor()
         defer { document.close() }
         let view = controller.textView
         edit(document) { view.insertText("Æ\n👩🏽‍💻\n", replacementRange: NSRange(location: 0, length: 0)) }
         document.updateChangeCount(.changeCleared)
         let selection = view.selectedRange()
-        var settings = NeovimSettings()
+        var settings = EditorSettings()
         settings.number = true
-        settings.relativenumber = true
+        settings.relativeNumber = true
         settings.wrap = false
-        settings.normal.foreground = 0xCCBB99
-        settings.expandtab = true
-        settings.tabstop = 4
+        settings.foreground = 0xCCBB99
+        settings.expandTabs = true
+        settings.tabWidth = 4
         controller.applySettings(settings)
         #expect(!document.isDocumentEdited)
         #expect(view.string == "Æ\n👩🏽‍💻\n")
@@ -141,14 +141,14 @@ struct NativeEditorTests {
         }
     }
 
-    @Test func indentationUsesImportedShiftWidthAndNativeUndo() throws {
+    @Test func indentationUsesConfiguredIndentWidthAndNativeUndo() throws {
         let (document, controller) = try editor()
         defer { document.close() }
         let view = controller.textView
-        var settings = NeovimSettings()
-        settings.expandtab = true
-        settings.tabstop = 8
-        settings.shiftwidth = 4
+        var settings = EditorSettings()
+        settings.expandTabs = true
+        settings.tabWidth = 8
+        settings.indentWidth = 4
         controller.applySettings(settings)
         edit(document) { view.insertText("æøå\n👩🏽‍💻", replacementRange: NSRange(location: 0, length: 0)) }
         view.setSelectedRange(NSRange(location: 0, length: (view.string as NSString).length))
@@ -163,7 +163,7 @@ struct NativeEditorTests {
     @Test func numberedEditorCanGrowAndClearAcrossGutterWidths() async throws {
         let (document, controller) = try editor()
         defer { document.close() }
-        var settings = NeovimSettings()
+        var settings = EditorSettings()
         settings.number = true
         controller.applySettings(settings)
         let ruler = try #require(controller.textView.enclosingScrollView?.verticalRulerView)

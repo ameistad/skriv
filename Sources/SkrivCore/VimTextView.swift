@@ -13,6 +13,9 @@ final class VimTextView: NSTextView {
     var expandTab = false
     var tabWidth = 8
     var shiftWidth = 8
+    var writingWidth = 72 {
+        didSet { updateWritingInsets() }
+    }
     var wrapsToWritingColumn = false {
         didSet { updateWritingInsets() }
     }
@@ -26,14 +29,14 @@ final class VimTextView: NSTextView {
     }
 
     /// Keep the native editor and scrollbar full-width while centering the text.
-    /// Font-relative width preserves a readable measure when an imported font changes.
+    /// Font-relative width preserves a readable measure when the configured font changes.
     func updateWritingInsets() {
         guard !updatingWritingInsets else { return }
         updatingWritingInsets = true
         defer { updatingWritingInsets = false }
         let font = font ?? .monospacedSystemFont(ofSize: 16, weight: .regular)
         let advance = ("0" as NSString).size(withAttributes: [.font: font]).width
-        let columnWidth = 72 * advance + 2 * (textContainer?.lineFragmentPadding ?? 0)
+        let columnWidth = CGFloat(writingWidth) * advance + 2 * (textContainer?.lineFragmentPadding ?? 0)
         let horizontalInset = wrapsToWritingColumn ? max(24, (bounds.width - columnWidth) / 2) : 24
         let inset = NSSize(width: horizontalInset, height: 24)
         if textContainerInset != inset { textContainerInset = inset }

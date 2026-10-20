@@ -7,7 +7,7 @@ Built with Swift and AppKit, with no external dependencies.
 
 - Opens focused, maximized notes with a configurable global shortcut.
 - Centers writing in a responsive 72-character column, with word wrapping by default.
-- Dark by default, with Etterglød colors and optional Neovim settings import.
+- Dark by default, with Etterglød colors and a simple `~/.config/skriv/config.skriv` configuration file.
 - Vim motions, Visual selection, literal search, and native Find/Replace.
 - UTF-8 files, native undo, and explicit save/discard controls.
 
@@ -26,6 +26,9 @@ The local build is ad-hoc signed. Save open notes and quit an older build before
 
 `⌘N` creates a note, `⌘S` saves, and `⌘F` finds text.
 `Esc` enters Normal mode; `i` resumes typing. The default global shortcut is `⌃⌥⌘N`.
+
+Use `⌘,` to open the configuration and `⇧⌘,` to reload it after saving.
+The file uses `key = value` lines; see the [configuration reference](docs/USAGE.md#configuration).
 
 Run tests with `swift test`.
 

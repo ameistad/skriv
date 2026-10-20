@@ -38,6 +38,34 @@
             <key>NSDocumentClass</key>
             <string>SkrivDocument</string>
         </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Skriv Configuration</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array><string>no.skriv.configuration</string></array>
+            <key>NSDocumentClass</key>
+            <string>SkrivDocument</string>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>no.skriv.configuration</string>
+            <key>UTTypeDescription</key>
+            <string>Skriv Configuration</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.plain-text</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array><string>skriv</string></array>
+            </dict>
+        </dict>
     </array>
 </dict>
 </plist>

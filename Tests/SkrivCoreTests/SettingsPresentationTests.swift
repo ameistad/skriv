@@ -23,15 +23,13 @@ struct SettingsPresentationTests {
         return (document, controller)
     }
 
-    @Test func fontsTryFallbacksAndRejectUnsupportedOptions() throws {
-        #expect(EditorFont.resolve("") == nil)
-        #expect(EditorFont.resolve("SkrivDefinitelyMissingFont:h16") == nil)
-        #expect(EditorFont.resolve("Menlo:h0") == nil)
-        #expect(EditorFont.resolve("Menlo:h18:b") == nil)
-        let fallback = try #require(EditorFont.resolve("SkrivDefinitelyMissingFont:h16,Menlo:h18"))
-        #expect(fallback.pointSize == 18)
-        #expect(fallback.familyName == "Menlo")
-        let generic = try #require(EditorFont.resolve("monospace:h14"))
+    @Test func fontsUseSeparateFamilyAndSize() throws {
+        #expect(EditorFont.resolve("SkrivDefinitelyMissingFont", size: 16) == nil)
+        #expect(EditorFont.resolve("Menlo", size: 0) == nil)
+        let installed = try #require(EditorFont.resolve("Menlo", size: 18))
+        #expect(installed.pointSize == 18)
+        #expect(installed.familyName == "Menlo")
+        let generic = try #require(EditorFont.resolve("monospace", size: 14))
         #expect(generic.pointSize == 14)
     }
 
@@ -40,14 +38,15 @@ struct SettingsPresentationTests {
         defer { document.close() }
         let view = controller.textView
         let scroll = try #require(view.enclosingScrollView)
-        var settings = NeovimSettings()
-        settings.guifont = "SkrivDefinitelyMissingFont:h16"
-        settings.linebreak = true
-        settings.tabstop = 4
-        settings.shiftwidth = 0
+        var settings = EditorSettings()
+        settings.fontFamily = "SkrivDefinitelyMissingFont"
+        settings.fontSize = 19
+        settings.wordWrap = true
+        settings.tabWidth = 4
+        settings.indentWidth = 0
         settings.number = true
         controller.applySettings(settings)
-        #expect(view.font?.pointSize == 16)
+        #expect(view.font?.pointSize == 19)
         #expect(view.defaultParagraphStyle?.lineBreakMode == .byWordWrapping)
         #expect(view.textContainer?.widthTracksTextView == true)
         #expect(scroll.rulersVisible)
@@ -56,7 +55,7 @@ struct SettingsPresentationTests {
         #expect(view.defaultParagraphStyle?.defaultTabInterval == advance * 4)
 
         settings.wrap = false
-        settings.linebreak = false
+        settings.wordWrap = false
         settings.number = false
         controller.applySettings(settings)
         #expect(view.defaultParagraphStyle?.lineBreakMode == .byCharWrapping)
@@ -73,7 +72,7 @@ struct SettingsPresentationTests {
     @Test func emptyNoteHasLayoutForItsFirstNumberedLine() throws {
         let (document, controller) = try editor()
         defer { document.close() }
-        var settings = NeovimSettings()
+        var settings = EditorSettings()
         settings.number = true
         controller.applySettings(settings)
         let layout = try #require(controller.textView.layoutManager)
@@ -126,21 +125,22 @@ struct SettingsPresentationTests {
         #expect(!document.isDocumentEdited)
     }
 
-    @Test func writingColumnAdaptsToImportedFontAndUnwrappedMode() throws {
+    @Test func writingColumnAdaptsToConfiguredFontAndUnwrappedMode() throws {
         let (document, controller) = try editor()
         defer { document.close() }
         let view = controller.textView
         controller.window?.setContentSize(NSSize(width: 1600, height: 600))
         controller.window?.contentView?.layoutSubtreeIfNeeded()
-        var settings = NeovimSettings()
-        settings.guifont = "monospace:h20"
+        var settings = EditorSettings()
+        settings.fontSize = 20
+        settings.writingWidth = 60
         settings.number = true
         controller.applySettings(settings)
         controller.window?.contentView?.layoutSubtreeIfNeeded()
         let container = try #require(view.textContainer)
         view.layoutManager?.ensureLayout(for: container)
         let advance = ("0" as NSString).size(withAttributes: [.font: try #require(view.font)]).width
-        #expect(abs(container.containerSize.width - 2 * container.lineFragmentPadding - 72 * advance) < 1)
+        #expect(abs(container.containerSize.width - 2 * container.lineFragmentPadding - 60 * advance) < 1)
 
         settings.wrap = false
         controller.applySettings(settings)
@@ -152,4 +152,80 @@ struct SettingsPresentationTests {
         #expect(container.containerSize.width < 800)
         #expect(!document.isDocumentEdited)
     }
+    @Test func configurationDocumentReusesUnsavedBufferAndSavesOriginalPath() async throws {
+        _ = NSApplication.shared
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("config.skriv")
+        let configuration = ConfigurationController(url: url)
+        try configuration.createIfMissing()
+        let documents = ScratchDocumentController()
+        defer {
+            for document in documents.documents {
+                document.close()
+                documents.removeDocument(document)
+            }
+        }
+        try documents.openConfiguration(at: url)
+        let document = try #require(documents.documents.first as? ScratchDocument)
+        #expect(document.fileURL == url)
+        #expect(document.fileType == ScratchDocument.configurationTypeName)
+        #expect(document.fileNameExtension(forType: ScratchDocument.configurationTypeName,
+                                           saveOperation: .saveOperation) == "skriv")
+        #expect(document.textStorage.string == SkrivConfiguration.template)
+        document.textStorage.mutableString.setString("font-size = 22\n")
+        try documents.openConfiguration(at: url)
+        #expect(documents.documents.count == 1)
+        #expect(document.textStorage.string == "font-size = 22\n")
+        document.updateChangeCount(.changeDone)
+        try await document.save(to: url, ofType: ScratchDocument.configurationTypeName, for: .saveOperation)
+        #expect(document.fileURL == url)
+        #expect(!document.isDocumentEdited)
+        try configuration.reload { _ in }
+        #expect(configuration.current.editor.fontSize == 22)
+        #expect(!FileManager.default.fileExists(atPath: url.deletingPathExtension().appendingPathExtension("txt").path))
+    }
+
+    @Test func parsedConfigurationUpdatesEveryOpenNoteWithoutEditing() throws {
+        let documents = ScratchDocumentController()
+        let (first, firstController) = try editor()
+        let (second, secondController) = try editor()
+        documents.addDocument(first)
+        documents.addDocument(second)
+        defer {
+            for document in [first, second] {
+                document.close()
+                documents.removeDocument(document)
+            }
+        }
+        for document in [first, second] {
+            document.textStorage.mutableString.setString("Unchanged æøå 👩🏽‍💻")
+            document.updateChangeCount(.changeCleared)
+        }
+        let parsed = try SkrivConfiguration.parse("""
+        font-size = 22
+        background = 123456
+        foreground = abcdef
+        line-numbers = both
+        writing-width = 90
+        tab-width = 4
+        keybind = H=h
+        """)
+        documents.applySettings(parsed.editor)
+        #expect(documents.currentSettings == parsed.editor, "Future notes use the same resolved settings.")
+        for controller in [firstController, secondController] {
+            #expect(controller.textView.font?.pointSize == 22)
+            #expect(controller.textView.backgroundColor == EditorTheme.color(0x123456))
+            #expect(controller.textView.textColor == EditorTheme.color(0xABCDEF))
+            #expect(controller.textView.writingWidth == 90)
+            #expect(controller.textView.tabWidth == 4)
+            #expect(controller.textView.enclosingScrollView?.rulersVisible == true)
+            #expect(controller.textView.normalKeyMappings == ["H": "h"])
+        }
+        for document in [first, second] {
+            #expect(!document.isDocumentEdited)
+            #expect(document.textStorage.string == "Unchanged æøå 👩🏽‍💻")
+        }
+    }
+
 }

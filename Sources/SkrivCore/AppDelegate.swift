@@ -4,21 +4,17 @@ import AppKit
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     // Construct this before anyone requests NSDocumentController.shared.
     private let documents = ScratchDocumentController()
-    private let settingsImport = SettingsImportController()
-    private let shortcutPreferences = ShortcutPreferences()
+    private let configuration = ConfigurationController()
+    private var startupConfigurationError: Error?
     private lazy var globalShortcut = GlobalShortcut { [weak self] in self?.newQuickNote() }
-    private var shortcutWindow: ShortcutPreferencesWindowController?
 
     public func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
-        documents.currentSettings = settingsImport.settings
-        settingsImport.onChange = { [documents] settings in
-            documents.currentSettings = settings
-            for document in documents.documents {
-                for controller in document.windowControllers {
-                    (controller as? NoteWindowController)?.applySettings(settings)
-                }
-            }
+        do { try loadConfiguration() }
+        catch {
+            startupConfigurationError = error
+            // First launch has no previous configuration; keep the bundled defaults usable.
+            if !LaunchBenchmark.isRequested { try? globalShortcut.apply(.default) }
         }
     }
 
@@ -29,13 +25,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             documents.newDocument(nil)
         }
         NSApp.activate(ignoringOtherApps: true)
-        if !LaunchBenchmark.isRequested {
-            do { try globalShortcut.apply(shortcutPreferences.configuration) }
-            catch {
-                let alert = NSAlert(error: error)
-                alert.informativeText += "\nYou can change the shortcut from Skriv → Global Shortcut…"
-                alert.runModal()
-            }
+        if let error = startupConfigurationError {
+            showConfigurationError(error, keepingDefaults: true)
         }
         LaunchBenchmark.startIfRequested { [weak self] in self?.newQuickNote() }
     }
@@ -65,26 +56,42 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         documents.newDocument(nil)
     }
 
-    @objc private func showShortcutPreferences(_ sender: Any?) {
-        if shortcutWindow == nil {
-            shortcutWindow = ShortcutPreferencesWindowController(preferences: shortcutPreferences, shortcut: globalShortcut)
+    private func loadConfiguration() throws {
+        try configuration.reload { [self] candidate in
+            if !LaunchBenchmark.isRequested { try globalShortcut.apply(candidate) }
         }
-        shortcutWindow?.showWindow(sender)
+        documents.applySettings(configuration.current.editor)
     }
 
-    @objc private func importNeovimSettings(_ sender: Any?) { settingsImport.importSettings() }
-    @objc private func showImportReport(_ sender: Any?) { settingsImport.showReport() }
-    @objc private func resetEditorSettings(_ sender: Any?) { settingsImport.resetSettings() }
+    @objc private func openConfiguration(_ sender: Any?) {
+        do {
+            try configuration.createIfMissing()
+            try documents.openConfiguration(at: configuration.url)
+        } catch { NSAlert(error: error).runModal() }
+    }
+
+    @objc private func reloadConfiguration(_ sender: Any?) {
+        do { try loadConfiguration() }
+        catch { showConfigurationError(error) }
+    }
+
+    private func showConfigurationError(_ error: Error, keepingDefaults: Bool = false) {
+        let alert = NSAlert()
+        alert.messageText = "Could Not Load Configuration"
+        alert.informativeText = "\(configuration.url.path)\n\n\(error.localizedDescription)\n\n"
+            + (keepingDefaults ? "Using built-in settings." : "The last working configuration is still active.")
+            + " Save your changes, then choose Skriv → Reload Configuration."
+        alert.runModal()
+    }
 
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
         let appMenu = submenu("Skriv", in: menu)
         appMenu.addItem(withTitle: "About Skriv", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Global Shortcut…", action: #selector(showShortcutPreferences(_:)), keyEquivalent: ",").target = self
-        appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Import / Refresh Neovim Settings…", action: #selector(importNeovimSettings(_:)), keyEquivalent: "").target = self
-        appMenu.addItem(withTitle: "Neovim Import Report…", action: #selector(showImportReport(_:)), keyEquivalent: "").target = self
-        appMenu.addItem(withTitle: "Use Built-in Editor Settings", action: #selector(resetEditorSettings(_:)), keyEquivalent: "").target = self
+        appMenu.addItem(withTitle: "Open Configuration…", action: #selector(openConfiguration(_:)), keyEquivalent: ",").target = self
+        let reload = appMenu.addItem(withTitle: "Reload Configuration", action: #selector(reloadConfiguration(_:)), keyEquivalent: ",")
+        reload.keyEquivalentModifierMask = [.command, .shift]
+        reload.target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide Skriv", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())
@@ -146,7 +153,28 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 final class ScratchDocumentController: NSDocumentController {
     /// Applied to every new note; nil means the built-in editor settings.
-    var currentSettings: NeovimSettings?
+    var currentSettings: EditorSettings?
+
+    func applySettings(_ settings: EditorSettings) {
+        currentSettings = settings
+        for document in documents {
+            for controller in document.windowControllers {
+                (controller as? NoteWindowController)?.applySettings(settings)
+            }
+        }
+    }
+
+    /// Open our custom extension as plain text, reusing an existing document with unsaved edits.
+    func openConfiguration(at url: URL) throws {
+        if let existing = document(for: url) {
+            existing.showWindows()
+            return
+        }
+        let document = try ScratchDocument(contentsOf: url, ofType: ScratchDocument.configurationTypeName)
+        addDocument(document)
+        document.makeWindowControllers()
+        document.showWindows()
+    }
 
     override var defaultType: String? { ScratchDocument.typeName }
 

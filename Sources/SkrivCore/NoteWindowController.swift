@@ -14,7 +14,7 @@ final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSText
     private var searchForward = true
     private var searchCount = 1
 
-    init(document: ScratchDocument, settings: NeovimSettings?) {
+    init(document: ScratchDocument, settings: EditorSettings?) {
         LaunchMetrics.shared.markPhase("beforeWindow")
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1000, height: 700)
@@ -193,29 +193,31 @@ final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSText
         LaunchMetrics.shared.markDisplaySubmitted()
     }
 
-    func applySettings(_ imported: NeovimSettings?) {
-        let settings = imported ?? NeovimSettings()
-        let background = settings.normal.background.map(EditorTheme.color) ?? EditorTheme.background
-        let foreground = settings.normal.foreground.map(EditorTheme.color) ?? EditorTheme.foreground
+    func applySettings(_ configuration: EditorSettings?) {
+        let settings = configuration ?? EditorSettings()
+        let background = settings.background.map(EditorTheme.color) ?? EditorTheme.background
+        let foreground = settings.foreground.map(EditorTheme.color) ?? EditorTheme.foreground
         window?.backgroundColor = background
         scrollView.backgroundColor = background
         textView.backgroundColor = background
         textView.textColor = foreground
-        textView.insertionPointColor = settings.cursor.background.map(EditorTheme.color) ?? EditorTheme.cursor
+        textView.insertionPointColor = settings.cursorColor.map(EditorTheme.color) ?? EditorTheme.cursor
         textView.selectedTextAttributes = [
-            .backgroundColor: settings.visual.background.map(EditorTheme.color) ?? EditorTheme.selectionBackground,
-            .foregroundColor: settings.visual.foreground.map(EditorTheme.color) ?? foreground,
+            .backgroundColor: settings.selectionBackground.map(EditorTheme.color) ?? EditorTheme.selectionBackground,
+            .foregroundColor: settings.selectionForeground.map(EditorTheme.color) ?? foreground,
         ]
-        textView.font = EditorFont.resolve(settings.guifont) ?? .monospacedSystemFont(ofSize: 16, weight: .regular)
+        textView.font = EditorFont.resolve(settings.fontFamily, size: settings.fontSize)
+            ?? .monospacedSystemFont(ofSize: settings.fontSize, weight: .regular)
+        textView.writingWidth = settings.writingWidth
         textView.normalKeyMappings = settings.normalKeyMappings
-        textView.expandTab = settings.expandtab
-        textView.tabWidth = settings.tabstop
-        textView.shiftWidth = settings.shiftwidth == 0 ? settings.tabstop : settings.shiftwidth
+        textView.expandTab = settings.expandTabs
+        textView.tabWidth = settings.tabWidth
+        textView.shiftWidth = settings.indentWidth == 0 ? settings.tabWidth : settings.indentWidth
         let style = NSMutableParagraphStyle()
-        style.lineBreakMode = (imported?.linebreak ?? true) ? .byWordWrapping : .byCharWrapping
+        style.lineBreakMode = settings.wordWrap ? .byWordWrapping : .byCharWrapping
         let advance = (" " as NSString).size(withAttributes: [.font: textView.font!]).width
         style.tabStops = []
-        style.defaultTabInterval = CGFloat(settings.tabstop) * advance
+        style.defaultTabInterval = CGFloat(settings.tabWidth) * advance
         textView.defaultParagraphStyle = style
         textView.typingAttributes[.paragraphStyle] = style
         // Presentation-only attributes must not create document edits or undo entries.
@@ -230,15 +232,15 @@ final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSText
             width: settings.wrap ? scrollView.contentSize.width : CGFloat.greatestFiniteMagnitude,
             height: CGFloat.greatestFiniteMagnitude)
         if settings.wrap { textView.setFrameSize(NSSize(width: scrollView.contentSize.width, height: textView.frame.height)) }
-        let showNumbers = settings.number || settings.relativenumber
+        let showNumbers = settings.number || settings.relativeNumber
         if showNumbers, numberRuler == nil {
             numberRuler = LineNumberRuler(scrollView: scrollView, editor: textView)
             scrollView.verticalRulerView = numberRuler
         }
-        numberRuler?.relative = settings.relativenumber
+        numberRuler?.relative = settings.relativeNumber
         numberRuler?.absolute = settings.number
-        numberRuler?.numberColor = settings.lineNr.foreground.map(EditorTheme.color) ?? .secondaryLabelColor
-        numberRuler?.editorBackground = settings.lineNr.background.map(EditorTheme.color) ?? background
+        numberRuler?.numberColor = settings.lineNumberForeground.map(EditorTheme.color) ?? .secondaryLabelColor
+        numberRuler?.editorBackground = settings.lineNumberBackground.map(EditorTheme.color) ?? background
         scrollView.hasVerticalRuler = showNumbers
         scrollView.rulersVisible = showNumbers
         textView.updateWritingInsets()

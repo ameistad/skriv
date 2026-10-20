@@ -17,27 +17,17 @@
 - Enforced by: `EverydayEditingTests` and `NativeEditorTests`.
 - Decided: 2026-10-20, everyday editing.
 
-## Concept: Imported Neovim settings
-- Meaning: resolved, supported colors, options, and safe Normal-mode remaps from the last explicit import.
-- Owner: `NeovimSettingsCache` at `~/Library/Application Support/Skriv/neovim-settings-v1.json`.
-- Source of truth: the user's Neovim configuration; this file is a disposable snapshot and must not be edited as a preference store. Explicit import/refresh rebuilds it; resetting removes it.
-- Format: one atomic JSON envelope containing `version` (currently 1), `importedAt` (Foundation JSON date), and `settings`.
-- `settings.normal`, `visual`, `cursor`, `lineNr`: resolved optional 24-bit RGB `foreground`/`background`. Missing channels use Skriv's bundled defaults.
-- `number`, `relativenumber`, `wrap`, `linebreak`, `expandtab`: resolved Boolean options.
-- `tabstop`: tab width, 1–9999; `shiftwidth`: indentation width, 0–9999, where zero means tabstop.
-- `guifont`: resolved Neovim GUI font string.
-- `normalKeyMappings`: explicitly supported nonrecursive one-key Normal-mode translations. The editor applies each translation once. Mappings with prefix conflicts, callbacks, expressions, other modes or unsupported commands are excluded.
-- `unsupportedMappings`, `warnings`: import report strings, not executable commands.
-- Failure semantics: missing, corrupt, oversize, invalid or unknown-version caches use bundled defaults. A failed import preserves the prior cache and current settings. No configuration is resolved during note opening.
-- Enforced by: `NeovimSettingsTests` round-trip/snapshot, corrupt/version/size rejection, import whitelist, timeout and bounded-output tests.
-- Decided: 2026-10-20. Cache is a snapshot with an explicit rebuild path; no schema migration is needed.
-
-## Concept: Global invocation shortcut
-- Meaning: the user's enabled state and physical keyboard combination for opening a fresh note.
-- Owner/source of truth: `ShortcutPreferences`, in one UserDefaults JSON data value under `globalShortcut.v1`.
-- Format: `ShortcutConfiguration { enabled: Bool, keyCode: UInt32, modifiers: UInt32 }`; modifier bits use Carbon flags. Default is Control–Option–Command–N (ANSI keycode 45), enabled.
-- Keyboard values are validated against known keys and require Command or Control. Invalid persisted data falls back to defaults without rewriting it.
-- UI writes only after OS registration succeeds; a disabled shortcut remains a valid configuration.
-- Relationship: independent of the Neovim settings cache; importing/resetting Neovim settings must not modify it.
-- Enforced by: `ShortcutPreferencesTests` for validation, malformed data and persistence; `GlobalShortcutTests.collisionPreservesWorkingRegistrationAndDisableReleasesIt` verifies OS registration failure preserves the existing shortcut and disabling releases it.
-- Decided: 2026-10-20, configurable global invocation.
+## Concept: Skriv configuration
+- Meaning: user-selected editor presentation, editing preferences, Normal-mode remaps, and the global invocation shortcut.
+- Decision: replace the imported-settings snapshot and separate shortcut preferences with one user-authored file. Neovim is no longer a configuration source or runtime integration.
+- Owner/source of truth: `~/.config/skriv/config.skriv`. `SkrivConfiguration` parses defaults plus explicit overrides; `ConfigurationController.current` is a disposable in-memory copy of the last successfully applied configuration.
+- Format: UTF-8, at most 64 KiB, flat case-sensitive `key = value` lines. Full-line `#` comments and literal double-quoted values are supported. No executable syntax, interpolation, includes, or project lookup. Last scalar value wins; empty values reset to defaults. `keybind` accumulates one-key mappings; empty `keybind` clears them.
+- Fields: `font-family` (installed family/PostScript name or `monospace`), `font-size` (6–72 points), `writing-width` (20–500 font advances), `wrap`, `word-wrap`, `expand-tabs` (Booleans), `tab-width` (1–9999), `indent-width` (0–9999; zero follows tab width), `line-numbers` (`none`, `absolute`, `relative`, `both`).
+- Colors: `background`, `foreground`, `cursor-color`, `selection-background`, `selection-foreground`, `line-number-foreground`, `line-number-background` are optional 24-bit RGB values. Missing values use bundled colors, editor colors, or system secondary label color as documented in `docs/USAGE.md`. Unavailable fonts use system monospace at the configured size.
+- `keybind`: nonrecursive one-key Normal-mode translations into the supported native command whitelist. Count keys, whitespace/control sources, sequences, scripts, and other modes are excluded. The engine applies each translation once outside operator-pending mode.
+- `global-shortcut`: `none`, or modifiers `ctrl`, `alt`, `cmd`, `shift` plus A–Z/space; Command or Control is required. Defaults to Control–Option–Command–N. Parsed physical keycode and Carbon modifier bits are derived runtime values, not another persisted store.
+- Lifecycle: load at startup and explicit reload only. Open Configuration creates a commented template only when absent, never rewrites existing content, and opens the file as a plain-text note using the `no.skriv.configuration` document type so native Save preserves the `.skriv` extension. New notes reuse current settings. No background polling or subprocesses.
+- Failure semantics: validate the whole file and register the candidate shortcut before publishing settings to existing/future notes. Failed reloads preserve the previous configuration and working shortcut. Invalid startup configuration reports an error and leaves defaults active; default shortcut registration is attempted. Missing files use defaults. Reload never changes note text or edited status.
+- Legacy data: the old Neovim snapshot and UserDefaults `globalShortcut.v1` value are neither read nor written, migrated, or deleted. The user explicitly chose to remove imported configuration; all new preferences belong to `config.skriv`.
+- Enforced by: `ConfigurationTests`, `ConfigurationControllerTests`, `SettingsPresentationTests`, `NativeEditorTests`, and `GlobalShortcutTests` (including real OS collision preservation).
+- Decided: 2026-10-20, standalone Ghostty-style configuration.

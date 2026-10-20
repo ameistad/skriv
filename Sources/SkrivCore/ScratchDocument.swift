@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 @objc(SkrivDocument)
 public final class ScratchDocument: NSDocument {
     static let typeName = UTType.plainText.identifier
+    nonisolated static let configurationTypeName = "no.skriv.configuration"
     let textStorage = NSTextStorage()
     private var pendingClose: DocumentCloseRequest?
 
@@ -15,8 +16,14 @@ public final class ScratchDocument: NSDocument {
     }
 
     public override class var autosavesInPlace: Bool { false }
-    public override class var readableTypes: [String] { [typeName] }
-    public override class var writableTypes: [String] { [typeName] }
+    public override class var readableTypes: [String] { [typeName, configurationTypeName] }
+    public override class var writableTypes: [String] { [typeName, configurationTypeName] }
+
+    public override nonisolated func fileNameExtension(forType typeName: String,
+                                                       saveOperation: NSDocument.SaveOperationType) -> String? {
+        if typeName == Self.configurationTypeName { return "skriv" }
+        return super.fileNameExtension(forType: typeName, saveOperation: saveOperation)
+    }
 
     public override func makeWindowControllers() {
         let settings = (NSDocumentController.shared as? ScratchDocumentController)?.currentSettings

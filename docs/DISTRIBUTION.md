@@ -1,7 +1,7 @@
 # Packaging
 
 `./scripts/build-app.sh release` produces the local ad-hoc signed
-`build/Skriv.app`. The app uses system frameworks and ships no Neovim process,
+`build/Skriv.app`. The app uses system frameworks and ships no external editor
 runtime, network updater, or third-party package.
 
 The ad-hoc signature is suitable for local development. To distribute outside
@@ -32,5 +32,5 @@ and [notarization workflow](https://developer.apple.com/documentation/security/n
 Before a public release, verify native save/open dialogs, failed saves,
 unsaved-change cancel/discard/quit, global shortcut collision and disable,
 accessibility, marked-text input, display/Space behavior, and startup/memory
-baselines on the supported macOS versions. Imported executable Neovim
-configuration runs only after the user's explicit import action.
+baselines on the supported macOS versions. Verify opening, saving, and reloading
+`~/.config/skriv/config.skriv`, including invalid settings and shortcut conflicts.

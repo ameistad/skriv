@@ -3,7 +3,7 @@
 # Skriv
 
 A small native macOS scratchpad for quick notes and a deliberate subset of Vim.
-Swift, AppKit, and system frameworks only; no bundled Neovim or package dependencies.
+Swift, AppKit, and system frameworks only; no external runtime or package dependencies.
 
 ## Run locally
 
@@ -30,13 +30,12 @@ The source mark is from [Streamline](https://streamlinehq.com).
 - A fresh note opens maximized on the display containing the pointer, focused
   and ready to type in **INSERT** mode. The mode is shown at the bottom.
 - Dark appearance and the built-in Etterglød (`etterglod.nvim`) plain-text
-  palette are the defaults, independently of macOS appearance or a Neovim install.
+  palette are the defaults, independently of macOS appearance.
 - Writing uses a centered column approximately 72 characters wide in the current
   font, shrinking to fit smaller windows with at least 24 points of side padding.
   Built-in settings wrap at word boundaries. Wrapping changes only presentation,
-  never the saved text. Imported `wrap` / `linebreak` settings are respected;
-  disabling wrapping restores horizontal scrolling. Writing width is currently
-  a built-in default, not a user preference.
+  never the saved text. Configure `writing-width`, `wrap`, and `word-wrap` in
+  `config.skriv`; disabling wrapping restores horizontal scrolling.
 - `⌘N` creates a note; `⌘O` opens UTF-8 text; `⌘S` saves; `⇧⌘S` saves under a
   new name. Unsupported encodings produce an error rather than replacing text.
 - `⌘W` closes, protecting unsaved changes with a native prompt.
@@ -46,8 +45,9 @@ The source mark is from [Streamline](https://streamlinehq.com).
   a previously saved file. `⌘Q` prompts for unsaved notes before quitting.
 - The app remains resident after all notes close. The Dock icon reopens a fresh note.
 - **Control–Option–Command–N** opens a fresh note from any app while Skriv is
-  running. Set or disable it in **Skriv → Global Shortcut…** (`⌘,`). Registration
-  conflicts preserve the previous working shortcut and show an error. Key names
+  running. Set `global-shortcut` in **Skriv → Open Configuration…** (`⌘,`),
+  or set it to `none` to disable it. Save and reload with `⇧⌘,`. Registration
+  conflicts preserve the previous working configuration and show an error. Key names
   refer to physical US keyboard positions. No Accessibility permission is needed
   for registration. Launch-at-login is not configured.
 
@@ -80,8 +80,8 @@ and joined emoji.
 
 Yank/delete/change share the native clipboard. Linewise clipboard metadata is
 preserved between Skriv notes; text copied from another app pastes characterwise.
-**Edit → Shift Right / Shift Left** (`⌘]` / `⌘[`) use the imported indentation
-width. `Tab` follows `expandtab` and tab width using native font geometry.
+**Edit → Shift Right / Shift Left** (`⌘]` / `⌘[`) use the configured
+`indent-width`. `Tab` follows `expand-tabs` and `tab-width` using native font geometry.
 
 Visual selections include whole graphemes and line separators. `v`/`V` switch
 selection type; repeating the current type or pressing `Esc` returns to Normal.
@@ -111,40 +111,80 @@ direction and `N` reverses it. Counts such as `3/` and `2n` select later matches
 No match leaves the caret unchanged. Each note keeps its own Vim query and
 direction in memory; the native Find bar uses AppKit's separate search state.
 
-## Neovim settings
+## Configuration
 
-Use **Skriv → Import / Refresh Neovim Settings…** to run the installed Neovim
-with your current configuration and cache its resolved settings. Extraction runs
-asynchronously with a 15-second timeout and bounded output. It inherits profile
-environment variables such as `NVIM_APPNAME` / `NVIM_PROFILE` when present.
-The import may execute the plugins and hooks in that configuration; Skriv itself
-does not host them.
+Skriv reads **`~/.config/skriv/config.skriv`** at startup. This is the sole
+preference store, including the global shortcut. The path is fixed; Skriv does
+not search XDG overrides, project directories, or Application Support for config.
+No file is required: missing settings use the built-in defaults.
 
-Applied settings:
+**Skriv → Open Configuration…** (`⌘,`) creates a commented template if needed
+and opens it as a plain-text note in Skriv. Existing files and comments are never
+rewritten. Save with `⌘S`, then choose **Skriv → Reload Configuration** (`⇧⌘,`).
+Reload reads the saved file, applies settings to existing and future notes, and
+preserves note text, selections, undo history, and edited status.
 
-- `Normal`, `Visual`, `Cursor`, and `LineNr` foreground/background colors where
-  applicable to a plain-text editor; missing colors fall back to Etterglød.
-- `number` and `relativenumber`, wrapping and word-boundary `linebreak`.
-- `tabstop`, `expandtab`, and `shiftwidth` (zero uses tabstop).
-- A supported installed `guifont` in `Family:hSIZE` form, with comma-separated
-  fallbacks. Empty or unsupported fonts keep the native monospace default;
-  unsupported fonts are reported. VimR-only font preferences are separate.
-- Nonrecursive single-character Normal-mode remaps to supported single-key
-  commands. Count keys, conflicting prefixes, operator-pending remaps,
-  buffer-local maps, expressions, Lua callbacks, and plugin commands are reported
-  as unsupported. Mappings are applied once, only in Normal mode.
+The syntax is a small, non-executable `key = value` format inspired by Ghostty:
 
-**Neovim Import Report…** shows applied mappings and unsupported items.
-**Use Built-in Editor Settings** removes the cache and restores the defaults.
-Refresh applies to existing and future notes without changing their text or
-edited status. Failed imports retain the last good settings. Opening notes
-never starts Neovim; missing or corrupt caches fall back safely. The disposable
-snapshot and independently owned shortcut preference are documented in
-[DATA-MODEL.md](../DATA-MODEL.md).
+```ini
+# Comments occupy their own line.
+font-family = Menlo
+font-size = 18
+writing-width = 80
+line-numbers = both
+expand-tabs = true
+tab-width = 4
+global-shortcut = ctrl+alt+cmd+n
+keybind = H=h
+keybind = L=l
+```
 
-The current local `lite` profile was verified on 2026-10-20: Etterglød colors,
-absolute/relative numbers, wrapping and indentation imported successfully;
-210 unsupported mappings were reported rather than approximated.
+- Keys are case-sensitive. Whitespace around `=` is ignored; blank lines are ignored.
+- Values may be enclosed in double quotes, such as `font-family = "SF Mono"`.
+  Quotes enclose literal text; there are no escape sequences, interpolation, scripts,
+  sections, or include directives. Inline comments are not supported.
+- Repeated scalar settings use the last value. An empty value restores the default.
+- Repeated `keybind` entries add mappings; the last entry for a source key wins.
+  An empty `keybind =` clears preceding mappings.
+- Colors are six hexadecimal RGB digits, optionally prefixed with `#`.
+- Unknown keys, malformed values, invalid UTF-8, and files larger than 64 KiB are
+  errors. Parse errors identify the line. A failed reload, including an OS shortcut
+  conflict, keeps the entire last working configuration. Startup errors report the
+  problem and use built-in settings; the default shortcut is registered if available.
+- Removing the file and reloading restores defaults. Opening a new note does not
+  read the file again. No polling, interpreter, or external process is involved.
+
+| Key | Default | Meaning / allowed values |
+| --- | --- | --- |
+| `font-family` | `monospace` | Installed font family or PostScript name; unavailable fonts fall back to system monospace |
+| `font-size` | `16` | Points, 6–72; fractional sizes allowed |
+| `writing-width` | `72` | Centered column width in font character advances, 20–500; shrinks to fit the window |
+| `wrap` | `true` | Wrap presentation; `false` enables horizontal scrolling |
+| `word-wrap` | `true` | Break wrapping at word boundaries; `false` allows character boundaries |
+| `line-numbers` | `none` | `none`, `absolute`, `relative`, or `both` |
+| `tab-width` | `8` | Tab width, 1–9999 |
+| `indent-width` | `0` | Indentation width, 0–9999; zero follows `tab-width` |
+| `expand-tabs` | `false` | Insert spaces for Tab and indentation |
+| `background` | `1e1e1e` | Editor background |
+| `foreground` | `c5c8c6` | Editor foreground |
+| `cursor-color` | `c07020` | Caret color |
+| `selection-background` | `676b71` | Selected-text background |
+| `selection-foreground` | Editor foreground | Selected-text foreground |
+| `line-number-foreground` | System secondary label color | Gutter text |
+| `line-number-background` | Editor background | Gutter background |
+| `global-shortcut` | `ctrl+alt+cmd+n` | Modifiers `ctrl`, `alt`, `cmd`, `shift` plus A–Z or `space`; requires `ctrl` or `cmd`. `none` disables it |
+| `keybind` | No remaps | `source=target`; one printable non-whitespace, non-digit source key (excluding `=`) and a supported single-key Normal command |
+
+Remaps are applied once, only in Normal mode outside an operator-pending command.
+They do not affect Insert or Visual mode, native Command shortcuts, or count keys.
+Targets are `h j k l w b e W B E 0 $ ^ i a I A o O x X p P u D C Y G d c y v V n N / ?`.
+Key sequences, callbacks, and plugin commands are not supported.
+Global shortcut letters refer to physical US keyboard positions.
+
+The previous Neovim import feature has been removed. Old imported JSON and
+`globalShortcut.v1` UserDefaults values are ignored and left untouched; preferences
+are now set explicitly in `config.skriv`. Theme attribution remains in the bundled
+third-party notices. Configuration ownership is recorded in [DATA-MODEL.md](../DATA-MODEL.md).
 
 ## Implementation phases
 
@@ -152,8 +192,8 @@ absolute/relative numbers, wrapping and indentation imported successfully;
    undo, UTF-8 save/open, explicit discard, close/quit protection, resident reopen.
 2. **Vim editing — implemented for the documented subset:** independent command
    engine, grapheme-safe motions/operators/counts, native clipboard and undo.
-3. **Neovim settings — implemented:** explicit asynchronous import, validated
-   atomic cache, live presentation updates, safe remaps and unsupported reports.
+3. **Configuration — implemented:** Skriv-owned `config.skriv`, validated file
+   reloads, live presentation updates, Normal remaps, and a file-owned global shortcut.
 4. **Invocation and performance — implemented:** configurable global shortcut,
    pointer-display placement, disabled window animations, opt-in cold/warm
    measurements, memory/size benchmarks, and distribution instructions. External
@@ -174,9 +214,9 @@ Fast startup and a small resource footprint guide every phase.
   separately. Distinguish first-responder readiness, application drawing, and
   actual screen presentation.
 - Keep idle operation free of polling, background services, network requests,
-  or subprocesses. Neovim runs only on explicit import.
+  or subprocesses. Configuration is read only at startup or explicit reload.
 - Prefer system frameworks and justify any added dependency's startup, memory,
-  and bundle-size costs. Retain a bundled default palette and cache imports.
+  and bundle-size costs. Retain a bundled default palette and in-memory resolved settings.
 - Track release app size, memory with no windows and a representative note, and
   repeated-open memory behavior alongside launch latency.
 
@@ -205,16 +245,14 @@ whole-grapheme editing requirement.
 Skriv therefore implements the agreed subset in Swift. `NSTextStorage` stays the
 single live text owner and AppKit owns undo and composition. This avoids a
 second synchronized Vim buffer and a C runtime dependency at the cost of a
-smaller command set. The bundled Neovim approach used by VimR's NvimView remains
-an alternative if full Vim compatibility eventually outweighs these constraints.
+smaller command set. Skriv does not embed or launch an external editor runtime.
 
 ## Verification
 
 ```sh
 swift test
-# Explicitly execute the local user's Neovim configuration for integration tests:
-SKRIV_TEST_REAL_NVIM=1 swift test --filter NeovimSettingsTests
-# Optional clean-Neovim comparison; does not load the user's configuration:
+# Optional developer-only comparison against a clean Neovim installation:
+# This checks Vim editing behavior; Neovim is not an app or build dependency.
 python3 scripts/check-vim-conformance.py
 # Build release immediately before performance measurements:
 ./scripts/build-app.sh release
@@ -227,20 +265,22 @@ python3 scripts/compare-launch.py --before /path/to/previous/Skriv.app --pairs 5
 
 Tests cover Unicode/UTF-8, command boundaries and counts, clipboard metadata,
 native editing/undo/composition, presentation-only refreshes, indentation,
-cache failure/snapshot semantics, importer timeouts/output bounds, shortcut
-persistence, OS registration collisions, callback dispatch, failed saves, and
+configuration parsing, file ownership, failed-reload preservation, shortcut
+validation, OS registration collisions, callback dispatch, failed saves, and
 growing/clearing a numbered 1,000-line note, literal search and wrapping, and
 Visual Unicode selections and line-boundary editing, exact-byte cache invalidation,
-and window sizing. Phase 6 verification passes **66 tests**, with two unchanged
-real-Neovim integration tests opt-in (both passed during phase 5); the conformance runner
+and window sizing. The configuration revision passes **67 tests**. The earlier conformance run
 reported **2,158 cases and zero differences**, including Visual edits, within
 its documented scope.
 
-UI smoke checks verified focused launch, Norwegian/emoji editing, native save,
-close/cancel/discard and quit prompts, mode changes, delete/undo/redo, explicit
-import/report, line-number rendering, shortcut preferences, native Find/Replace
-and undo, Vim Unicode search/Return/Escape/wrap, and character/line Visual
-selection. Physical hotkey
+The configuration UI smoke check verified Open Configuration, saving without
+renaming `.skriv` to `.txt`, live reload of line numbers, restoration of defaults,
+and removal of the import menus.
+
+Earlier UI smoke checks verified focused launch, Norwegian/emoji editing,
+native save, close/cancel/discard and quit prompts, mode changes, delete/undo/redo,
+line-number rendering, native Find/Replace and undo, Vim Unicode
+search/Return/Escape/wrap, and character/line Visual selection. Physical hotkey
 invocation could not be verified with the app-targeted UI input tool; OS registry
 and callback tests pass. Multi-display/Spaces, VoiceOver, older supported macOS
 versions, and downloaded-app Gatekeeper behavior still require manual checks.

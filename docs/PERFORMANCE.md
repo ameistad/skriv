@@ -47,8 +47,12 @@ The warm input target is under 100 ms, assessed against p95 as well as median.
 Do not claim a visible-presentation target based on `displaySubmitted`.
 Instrumentation collects timestamps before writing diagnostics, and is disabled
 unless `SKRIV_METRICS_PATH` is set. Normal operation has no measurement timer,
-polling loop, or subprocess. Importing Neovim settings is outside this benchmark
-and outside the opening path.
+polling loop, or subprocess. Configuration is read at startup and explicit reload;
+opening additional notes uses the resolved in-memory settings.
+
+The measurements below predate the standalone `config.skriv` format. References
+to imported settings describe those historical measurements; the import feature
+has since been removed.
 
 For manual hot-key measurement, launch the executable with a metrics destination,
 switch to another app, and invoke the configured shortcut:
