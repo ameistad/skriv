@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14" id="Button-Stop--Streamline-Flex-Gradient" height="14" width="14">
+  <desc>
+    Button Stop Streamline Icon: https://streamlinehq.com
+  </desc>
+  <g id="button-stop--button-television-buttons-movies-stop-tv-video-controls">
+    <path id="Union" fill="url(#paint0_linear_7718_10774)" fill-rule="evenodd" d="M7 .25c-1.14832 0-2.26888.10499-3.34273.224686C1.98532.661049.641907 2.0033.462704 3.67828.348408 4.74658.25 5.85964.25 7c0 1.14035.098408 2.25341.212704 3.3217.179204 1.675 1.522616 3.0173 3.194566 3.2036C4.73112 13.645 5.85168 13.75 7 13.75s2.26888-.105 3.3427-.2247c1.672-.1863 3.0154-1.5286 3.1946-3.2036.1143-1.06829.2127-2.18135.2127-3.3217 0-1.14036-.0984-2.25342-.2127-3.32172C13.3581 2.0033 12.0147.661049 10.3427.474686 9.26888.35499 8.14832.25 7 .25Z" clip-rule="evenodd"></path>
+  </g>
+  <defs>
+    <linearGradient id="paint0_linear_7718_10774" x1=".769" x2="16.155" y1="1.341" y2="10.013" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00f6e7"></stop>
+      <stop offset="1" stop-color="#6d1fec"></stop>
+    </linearGradient>
+  </defs>
+</svg>

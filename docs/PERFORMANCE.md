@@ -1,0 +1,249 @@
+# Measuring invocation
+
+Build optimized code, then run on a logged-in macOS desktop:
+
+```sh
+./scripts/build-app.sh release
+python3 scripts/benchmark.py --runs 10 --warm 20
+```
+
+This runs ten fresh processes and twenty warm note invocations per process.
+Each process creates and closes only its own unmodified scratch notes, skips
+global shortcut registration, and exits. Avoid interacting with benchmark
+windows. A separately running Skriv process and its documents are unaffected.
+The script requires Python 3.10+ and saves raw JSONL and a JSON summary under
+`build/benchmarks/run-*`. Reports contain hardware, OS, bundle and executable
+sizes, median/p95/min/max milliseconds, and resident memory in bytes.
+Always build release immediately beforehand; the script does not infer the
+optimization level from a binary.
+
+Timing boundaries:
+
+- `coldProcess`: immediately before Python creates the process, through
+  first-responder assignment or AppKit display submission. Includes subprocess
+  setup, process creation, dynamic linking, and application startup; excludes
+  Finder/Launch Services dispatch. The harness passes a monotonic nanosecond
+  timestamp, verified to use the same macOS uptime clock as Swift DispatchTime.
+  This does not force OS filesystem caches to be cold.
+- `coldStartup`: the first Swift statement in `main` to first-responder
+  assignment and AppKit display submission. It excludes process creation,
+  dynamic linking, and OS disk-cache effects; these are fresh-process launches,
+  not forced filesystem-cold launches.
+- `warmInvocation`: entry into the shared new-note action to the same points.
+  The harness calls that action on the main event loop. It excludes keyboard
+  hardware and hot-key event delivery.
+- `inputReady`: the editor has been assigned first responder.
+- `displaySubmitted`: `NSWindow.displayIfNeeded()` has returned. This measures
+  application drawing, **not** compositor presentation or pixels reaching the
+  screen. Actual visible latency still needs Instruments/OS presentation
+  tracing or external high-speed video.
+- Memory: `mach_task_basic_info.resident_size` sampled with an empty note open,
+  after all benchmark notes close, with a 1,000-line Norwegian/emoji note open, and after
+  warm runs. Representative-note and final-idle samples allow one second for
+  transient drawing surfaces to settle. These RSS samples are not macOS physical
+  footprint or memory pressure.
+
+The warm input target is under 100 ms, assessed against p95 as well as median.
+Do not claim a visible-presentation target based on `displaySubmitted`.
+Instrumentation collects timestamps before writing diagnostics, and is disabled
+unless `SKRIV_METRICS_PATH` is set. Normal operation has no measurement timer,
+polling loop, or subprocess. Importing Neovim settings is outside this benchmark
+and outside the opening path.
+
+For manual hot-key measurement, launch the executable with a metrics destination,
+switch to another app, and invoke the configured shortcut:
+
+```sh
+SKRIV_METRICS_PATH=/tmp/skriv-launch.jsonl build/Skriv.app/Contents/MacOS/Skriv
+```
+
+Use a single interactive instance when checking hot-key behavior. Check shortcut
+collisions, disabled shortcuts, multiple displays, menu-bar and Dock placement,
+Spaces, Norwegian layouts, VoiceOver, and marked-text composition separately.
+Automatic in-process timing does not verify those workflows.
+
+Apple documents that
+[`displayIfNeeded`](https://developer.apple.com/documentation/appkit/nswindow/displayifneeded())
+passes drawing through the window's view hierarchy; it does not promise
+physical display presentation.
+Python documents that [`monotonic_ns`](https://docs.python.org/3/library/time.html#time.monotonic)
+uses `mach_absolute_time` on macOS, with a clock shared across processes from
+Python 3.10 onward. The harness checks the clock implementation before running.
+
+## Baseline — 2026-10-20
+
+Release build, Apple M3 Pro (Mac15,7), 18 GiB RAM, arm64, macOS 26.5.
+Ten fresh processes with twenty warm opens each; 200 warm samples. Imported
+Etterglød settings enabled absolute and relative numbers, wrapping and
+word-boundary wrapping, with the configured SF Mono / Menlo fallback font list.
+The cache fingerprint is saved in the report, and the harness rejects settings
+changes during a run.
+
+| Boundary | Median | p95 |
+| --- | ---: | ---: |
+| Process creation → input readiness | 178.691 ms | 219.075 ms |
+| Process creation → display submitted | 180.285 ms | 220.630 ms |
+| Swift main → input readiness | 163.102 ms | 209.394 ms |
+| Swift main → display submitted | 164.709 ms | 210.949 ms |
+| Warm action → input readiness | 15.812 ms | 21.960 ms |
+| Warm action → display submitted | 16.800 ms | 23.221 ms |
+
+Warm input readiness peaked at 30.596 ms, within the 100 ms target for this
+shared-action benchmark. Physical hot-key delivery and actual screen
+presentation are still separate manual/trace measurements. The single
+post-build preflight process took 376.591 ms to input readiness; repeated
+fresh-process launches benefit from OS caches and are not a boot-cold test.
+
+| Resident memory | Median | p95 |
+| --- | ---: | ---: |
+| One empty note | 101.57 MiB | 101.73 MiB |
+| No windows, before warm opens | 92.91 MiB | 99.86 MiB |
+| 1,000-line, 75,000-byte Norwegian/emoji note | 107.66 MiB | 216.77 MiB |
+| No windows, after warm opens | 109.01 MiB | 111.06 MiB |
+
+The representative-note measurement had one transient 216.77 MiB outlier;
+that process returned to 104.58 MiB when its note closed. RSS can retain or
+release AppKit drawing allocations asynchronously, so these samples do not
+establish a fixed memory budget.
+
+A separate single-process 200-open soak completed with warm input median
+14.549 ms / p95 18.249 ms, and final idle RSS **109.45 MiB**—comparable with
+the 20-open baseline, with no sustained per-open growth observed. Its transient
+representative-note RSS was 163.77 MiB.
+[`Soak report`](../build/benchmarks/run-1za6avb4/summary.json).
+
+The ad-hoc signed app bundle is **641,818 bytes** (about 627 KiB).
+Raw measurements and host metadata:
+[`run-0dq9r8db/summary.json`](../build/benchmarks/run-0dq9r8db/summary.json).
+The local `build` directory is ignored by version control; this section records
+the baseline when raw files are not present in a checkout.
+
+Shortcut tests exercise actual Carbon registration collisions, preserving the
+old registration, disabling/releasing a shortcut, idempotent reapplication, and
+dispatching a hot-key event to the registered callback. Injected UI key presses
+did not establish physical system-wide hot-key delivery; that remains a
+physical-keyboard check.
+
+## Phase 5 check — 2026-10-20
+
+Same hardware, imported settings, and 10-process / 200-warm-open workload,
+after adding native Find/Replace, literal Vim search and Visual selection.
+
+| Boundary | Median | p95 |
+| --- | ---: | ---: |
+| Process creation → input readiness | 311.195 ms | 1,391.745 ms |
+| Process creation → display submitted | 313.242 ms | 1,395.057 ms |
+| Swift main → input readiness | 299.167 ms | 1,152.278 ms |
+| Swift main → display submitted | 301.213 ms | 1,155.591 ms |
+| Warm action → input readiness | 30.956 ms | 44.484 ms |
+| Warm action → display submitted | 32.500 ms | 46.378 ms |
+
+Warm input readiness peaked at 67.400 ms, still below the 100 ms target.
+This run was slower than the original baseline. During investigation, several
+Simulator processes and WindowServer were consuming substantial CPU, so this
+is a loaded-desktop measurement and cannot establish an isolated code regression.
+No unrelated user applications were stopped to improve the result.
+A temporary comparison build with `usesFindBar` and incremental searching
+disabled measured 32.786 ms median / 53.081 ms p95 over 100 warm opens
+([comparison report](../build/benchmarks/run-w8e3uqkg/summary.json)).
+Disabling native Find initialization did not improve these timings. The runs
+were sequential under variable load, so they do not quantify its exact cost.
+The comparison build is outside the project; the release retains Find.
+
+Median RSS was 101.58 MiB with an empty note, 92.83 MiB before warm opens,
+107.49 MiB with the representative note, and 103.73 MiB after warm opens.
+The release bundle is **669,194 bytes** (about 654 KiB), up 27,376 bytes from
+phase 4. There are still no package dependencies or background services.
+The custom Vim search bar is allocated on first use; search history and Visual
+state are in memory only.
+
+Raw measurements:
+[`run-an7zlgqs/summary.json`](../build/benchmarks/run-an7zlgqs/summary.json).
+
+## Phase 6 — 2026-10-20
+
+Opening now starts with the final content rectangle and defers native window
+creation until the view hierarchy is ready. The app no longer creates an
+oversized window and immediately resizes it. Opt-in `coldStartupPhase` and
+`warmInvocationPhase` samples identify the opening stages; samples accumulate
+in memory and are written only after the input/drawing timestamps are captured.
+Normal use performs no timing or diagnostic I/O.
+
+Five alternating before/after pairs, each with 20 warm opens, on the same
+M3 Pro and imported settings. The comparison harness copies and signs both
+builds with isolated app identities, reverses their order every pair, and
+rejects changes to binaries or settings during measurement. The desktop still
+had other development workloads running.
+
+| Input readiness | Before median / p95 | After median / p95 |
+| --- | ---: | ---: |
+| Warm action, 100 samples per build | 15.167 / 23.692 ms | 14.285 / 22.361 ms |
+| Process creation, 5 samples per build | 154.995 / 1,085.285 ms | 161.853 / 474.696 ms |
+| Swift main, 5 samples per build | 147.557 / 745.676 ms | 154.782 / 174.652 ms |
+
+Warm drawing submission changed from 16.096 / 25.047 ms to 15.515 / 23.578 ms.
+The warm improvement is modest (about 6%). The small cold-start sample and
+variable load do **not** establish a cold-start improvement. All optimized
+warm input samples were below 31 ms. These are application timings, not
+physical hot-key delivery or compositor latency.
+
+The first comparison using the interactive app's bundle identity completed its
+measurements but timed out during exit. That incomplete run is excluded.
+An isolated probe and the five isolated pairs completed successfully.
+
+Median optimized RSS was 101.42 MiB for an empty note, 92.69 MiB with no windows
+before warm opens, 103.47 MiB for the representative note and 103.91 MiB after
+warm opens. As before, occasional drawing allocations produced higher
+transient samples. This launch workload does not exercise the new editing caches.
+
+The shipped executable is **413,920 bytes**, about 38% smaller than the
+666,384-byte instrumented pre-optimization executable. Release packaging strips
+debug/local symbols from the bundled copy before signing; the unstripped
+SwiftPM binary remains in `.build` for diagnostics. The full app is
+**1,639,002 bytes** (1.56 MiB). Unlike the phase 5 size baseline, both phase 6
+builds include the app icon; the icon accounts for most of the bundle.
+
+### Editing CPU measurements
+
+Normal and Visual motions now reuse one immutable grapheme index. Literal
+search retains one query's match ranges and uses binary search for repeat
+navigation. Exact UTF-8 comparisons prevent stale offsets when canonically
+equivalent text has different UTF-16 lengths; contiguous storage uses `memcmp`
+with a safe fallback. No persisted cache or dependency was added.
+
+| Workload, median | Before | After |
+| --- | ---: | ---: |
+| Motion, 1,000 lines / 75 KB UTF-8 | 1.575 ms | 0.004 ms |
+| Visual motion, 1,000 lines | 3.129 ms | 0.009 ms |
+| Repeat search, 1,000 lines | 1.878 ms | 0.003 ms |
+| Motion, 10,000 lines / 750 KB UTF-8 | 16.063 ms | 0.015 ms |
+| Visual motion, 10,000 lines | 32.161 ms | 0.030 ms |
+| Repeat search, 10,000 lines | 19.481 ms | 0.030 ms |
+
+These release-mode CPU measurements exclude AppKit input delivery, text layout,
+ruler drawing and display presentation. The first command still builds an
+index: 3.668 ms for the smaller fixture and 20.374 ms for the larger one in the
+optimized run. Editing or replacing the text invalidates caches; first-use work
+remains proportional to text size. Cached arrays consume memory proportional
+to characters/lines and matches, are allocated only when used, and are released
+on native edits. Entering Insert also releases the motion index. There is only
+one cached text version and one search query per editor.
+
+Reproduce:
+
+```sh
+# Save a release build before changing code:
+ditto build/Skriv.app build/performance-before/Skriv.app
+# After changing code:
+./scripts/build-app.sh release
+python3 scripts/compare-launch.py --before build/performance-before/Skriv.app
+python3 scripts/benchmark-editing.py --output build/benchmarks/editing.json
+# Optional: benchmark VimEngine.swift and LiteralSearch.swift from a source snapshot:
+python3 scripts/benchmark-editing.py --source-root /path/to/snapshot \
+  --output build/benchmarks/editing-before.json
+```
+
+Raw reports:
+[alternating launch comparison](../build/benchmarks/comparison-c96u1u8n/summary.json),
+[editing before](../build/benchmarks/editing-before.json),
+[editing after](../build/benchmarks/editing-after.json).
