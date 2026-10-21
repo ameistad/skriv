@@ -21,6 +21,7 @@ open build/Skriv.app
 ```
 
 The local build is ad-hoc signed. Save open documents and quit an older build before relaunching.
+The build script defaults to release; use `./scripts/build-app.sh debug` for an unoptimized development build.
 
 ## Basics
 

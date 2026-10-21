@@ -20,13 +20,16 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var prompt: Prompt = .command
     private var promptSubmit: NSButton?
     private var closeAfterCommandSave: Bool?
+    private var launchMeasurement: LaunchMetrics.Opening?
+    var isOpeningComplete: Bool { launchMeasurement?.isFinished ?? true }
 
     init(document: SkrivDocument, settings: EditorSettings?,
          savedFrameName: NSWindow.FrameAutosaveName = "SkrivDocument") {
         self.savedFrameName = savedFrameName
+        LaunchMetrics.shared.markStartupCheckpoint("controllerProperties")
         LaunchMetrics.shared.markPhase("beforeWindow")
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
-        let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1000, height: 700)
+        let frame = LaunchBenchmark.windowFrame ?? screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1000, height: 700)
         let style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
         let window = NSWindow(
             contentRect: NSWindow.contentRect(forFrameRect: frame, styleMask: style),
@@ -35,7 +38,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
             defer: true
         )
         window.minSize = NSSize(width: 400, height: 300)
-        window.setFrameUsingName(savedFrameName)
+        if !LaunchBenchmark.isRequested { window.setFrameUsingName(savedFrameName) }
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
         window.animationBehavior = .none
@@ -125,7 +128,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
     // Explicit saving lets all document windows share one preference; AppKit's
     // automatic frame saving only accepts a name for one open window at a time.
     private func saveWindowFrame() {
-        guard let window, window.isVisible, !isInFullScreen,
+        guard !LaunchBenchmark.isRequested, let window, window.isVisible, !isInFullScreen,
               !window.styleMask.contains(.fullScreen) else { return }
         window.saveFrame(usingName: savedFrameName)
     }
@@ -292,7 +295,10 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         LaunchMetrics.shared.markPhase("showAndFocus")
         LaunchMetrics.shared.markInputReady()
         window?.displayIfNeeded()
-        LaunchMetrics.shared.markDisplaySubmitted()
+        if let window {
+            launchMeasurement = LaunchMetrics.shared.markDisplaySubmitted(window: window, editor: textView)
+            launchMeasurement?.markInterfaceComplete()
+        }
     }
 
     func applySettings(_ configuration: EditorSettings?) {

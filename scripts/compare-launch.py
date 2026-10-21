@@ -9,18 +9,30 @@ import hashlib
 import json
 from pathlib import Path
 import plistlib
+import random
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
 
-from benchmark import summarize
+from benchmark import summarize, with_full_readiness
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def fingerprint(app):
     return hashlib.sha256((app / "Contents/MacOS/Skriv").read_bytes()).hexdigest()
+
+
+def paired_change(before, after):
+    """Negative deltas favor the new build. Keep every pair, including first launch."""
+    deltas = [new - old for old, new in zip(before, after, strict=True)]
+    rng = random.Random(0)
+    bootstraps = sorted(statistics.median(rng.choices(deltas, k=len(deltas))) for _ in range(5000))
+    return {"pairs": len(deltas), "medianDeltaMilliseconds": round(statistics.median(deltas), 3),
+            "medianDelta95PercentBootstrapInterval": [round(bootstraps[124], 3), round(bootstraps[4874], 3)],
+            "deltasMilliseconds": deltas}
 
 
 def main():
@@ -30,6 +42,7 @@ def main():
     parser.add_argument("--pairs", type=int, default=5)
     parser.add_argument("--warm", type=int, default=20)
     parser.add_argument("--output", type=Path, default=ROOT / "build/benchmarks")
+    parser.add_argument("--require-readiness", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.pairs <= 50 or not 1 <= args.warm <= 1000:
         parser.error("--pairs must be 1…50 and --warm must be 1…1000")
@@ -37,6 +50,7 @@ def main():
     fingerprints = {name: fingerprint(app) for name, app in apps.items()}
     args.output.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix="comparison-", dir=args.output.resolve()))
+    comparison_id = output.name.replace("_", "-")
     # Avoid sharing Launch Services identity with an interactive Skriv instance.
     # Both copies receive the same treatment before any timing begins.
     measured_apps = {}
@@ -45,7 +59,7 @@ def main():
         shutil.copytree(app, copied)
         plist = copied / "Contents/Info.plist"
         info = plistlib.loads(plist.read_bytes())
-        info["CFBundleIdentifier"] = f"no.skriv.benchmark-{name}"
+        info["CFBundleIdentifier"] = f"no.skriv.{comparison_id}.{name}"
         plist.write_bytes(plistlib.dumps(info))
         subprocess.run(["codesign", "--force", "--sign", "-", str(copied)],
                        check=True, capture_output=True)
@@ -53,23 +67,35 @@ def main():
     samples = {"before": [], "after": []}
     metadata = {}
     configuration_fingerprints = set()
+    cold_by_pair = {name: {} for name in apps}
+    first_launch = {}
     for pair in range(args.pairs):
         order = ("before", "after") if pair % 2 == 0 else ("after", "before")
         for name in order:
             destination = output / f"{pair + 1}-{name}"
-            run = subprocess.run([
+            command = [
                 sys.executable, str(ROOT / "scripts/benchmark.py"),
                 "--app", str(measured_apps[name]), "--runs", "1", "--warm", str(args.warm),
                 "--output", str(destination),
-            ], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60 + args.warm)
+            ]
+            if args.require_readiness:
+                command.append("--require-readiness")
+            run = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 timeout=60 + args.warm)
             (output / f"{pair + 1}-{name}.log").write_text(run.stdout)
             if run.returncode:
                 raise RuntimeError(f"Benchmark failed; see {output / f'{pair + 1}-{name}.log'}")
             report_path, = destination.glob("run-*/summary.json")
             metadata[name] = json.loads(report_path.read_text())
             configuration_fingerprints.add(metadata[name]["configurationSHA256"])
+            cold = {key: value["median"] for key, value in metadata[name]["results"].items()
+                    if key.startswith("coldProcess.")}
+            if pair == 0:
+                first_launch[name] = cold
+            for key, value in cold.items():
+                cold_by_pair[name].setdefault(key, []).append(value)
             for raw in report_path.parent.glob("process-*.jsonl"):
-                samples[name].extend(json.loads(line) for line in raw.read_text().splitlines() if line)
+                samples[name].extend(with_full_readiness([json.loads(line) for line in raw.read_text().splitlines() if line]))
         print(f"Pair {pair + 1}/{args.pairs} complete", flush=True)
     if len(configuration_fingerprints) != 1:
         raise RuntimeError("Editor settings changed between builds; comparison is invalid.")
@@ -83,12 +109,15 @@ def main():
             results[name][f"{kind}.{stage}.{field}"] = summarize(
                 [item[field] for item in batch if item["kind"] == kind and item["stage"] == stage])
     summary = {"pairs": args.pairs, "warmPerProcess": args.warm,
-               "binarySHA256": fingerprints, "metadata": metadata, "results": results}
+               "binarySHA256": fingerprints, "metadata": metadata, "results": results,
+               "firstLaunch": first_launch,
+               "pairedChanges": {key: paired_change(cold_by_pair["before"][key], cold_by_pair["after"][key])
+                                 for key in cold_by_pair["before"].keys() & cold_by_pair["after"].keys()}}
     path = output / "summary.json"
     path.write_text(json.dumps(summary, indent=2) + "\n")
     for name in apps:
         print(name, json.dumps({key: value for key, value in results[name].items()
-                               if key.endswith("inputReady.milliseconds")}, indent=2))
+                               if key.endswith(("inputReady.milliseconds", "fullyReady.milliseconds"))}, indent=2))
     print(f"Full report: {path}")
 
 

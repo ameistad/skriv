@@ -26,6 +26,7 @@ public final class SkrivDocument: NSDocument {
     }
 
     public override func makeWindowControllers() {
+        LaunchMetrics.shared.markStartupCheckpoint("document")
         let settings = (NSDocumentController.shared as? SkrivDocumentController)?.currentSettings
         addWindowController(DocumentWindowController(document: self, settings: settings))
     }

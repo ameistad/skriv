@@ -8,16 +8,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var startupConfigurationError: Error?
 
     public func applicationWillFinishLaunching(_ notification: Notification) {
+        LaunchMetrics.shared.markStartupCheckpoint("launchDispatch")
         NSApp.appearance = NSAppearance(named: .darkAqua)
         do { try loadConfiguration() }
         catch {
             startupConfigurationError = error
         }
+        LaunchMetrics.shared.markStartupCheckpoint("configuration")
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        LaunchMetrics.shared.markStartupCheckpoint("finishLaunching")
         NSWindow.allowsAutomaticWindowTabbing = false
         NSApp.mainMenu = makeMenu()
+        LaunchMetrics.shared.markStartupCheckpoint("menu")
         if documents.documents.isEmpty {
             documents.newDocument(nil)
         }

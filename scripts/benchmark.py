@@ -26,12 +26,26 @@ def summarize(values, digits=3):
     }
 
 
+def with_full_readiness(samples):
+    """Derive the later readiness boundary without changing application-emitted JSONL."""
+    result = list(samples)
+    for kind in ("coldStartup", "coldProcess", "warmInvocation"):
+        ready = [item["milliseconds"] for item in samples if item["kind"] == kind and item["stage"] == "eventLoopReady"]
+        complete = [item["milliseconds"] for item in samples if item["kind"] == kind and item["stage"] == "interfaceComplete"]
+        if ready or complete:
+            for event, interface in zip(ready, complete, strict=True):
+                result.append({"kind": kind, "stage": "fullyReady", "milliseconds": max(event, interface), "derived": True})
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path, default=Path("build/Skriv.app"))
     parser.add_argument("--runs", type=int, default=10)
     parser.add_argument("--warm", type=int, default=20, help="Warm opens per fresh process")
     parser.add_argument("--output", type=Path, default=Path("build/benchmarks"))
+    parser.add_argument("--require-readiness", action="store_true",
+                        help="Require event-loop readiness and complete-interface samples (new builds)")
     args = parser.parse_args()
     clock = time.get_clock_info("monotonic")
     if sys.platform != "darwin" or sys.version_info < (3, 10) or clock.implementation != "mach_absolute_time()":
@@ -57,11 +71,21 @@ def main():
             raise RuntimeError("The app did not write metrics; use the current release build.")
         batch = [json.loads(line) for line in metrics.read_text().splitlines() if line]
         for kind, expected in (("coldStartup", 1), ("coldProcess", 1), ("warmInvocation", args.warm)):
-            for stage in ("inputReady", "displaySubmitted"):
+            stages = ("inputReady", "displaySubmitted")
+            if args.require_readiness:
+                stages += ("eventLoopReady", "interfaceComplete")
+            for stage in stages:
                 found = sum(item["kind"] == kind and item["stage"] == stage for item in batch)
                 if found != expected:
                     raise RuntimeError(f"Run {run + 1}: expected {expected} {kind}/{stage}, got {found}")
-        samples.extend(batch)
+            if args.require_readiness:
+                boundaries = {stage: [item["milliseconds"] for item in batch
+                                      if item["kind"] == kind and item["stage"] == stage] for stage in stages}
+                for index in range(expected):
+                    if not (boundaries["inputReady"][index] <= boundaries["displaySubmitted"][index]
+                            <= min(boundaries["eventLoopReady"][index], boundaries["interfaceComplete"][index])):
+                        raise RuntimeError(f"Run {run + 1}: invalid readiness ordering for {kind}")
+        samples.extend(with_full_readiness(batch))
         print(f"Process {run + 1}/{args.runs} complete", flush=True)
 
     def sysctl(name):
@@ -89,6 +113,7 @@ def main():
         "executableBytes": executable.stat().st_size,
         "runs": args.runs,
         "warmOpensPerProcess": args.warm,
+        "requiresReadiness": args.require_readiness,
         "results": results,
         "limitations": [
             "Build release immediately before benchmarking; configuration is not inferred.",
@@ -96,6 +121,8 @@ def main():
             "coldStartup begins in main. Neither cold measurement forces OS filesystem caches to be cold.",
             "Warm timing invokes the shared document action, excluding hardware key delivery.",
             "Input readiness means the editor was assigned first responder, not event delivery latency.",
+            "eventLoopReady requires a main-queue turn, active app, key window and editor first responder; it does not measure hardware input latency.",
+            "interfaceComplete includes secondary UI and its AppKit drawing submission; full usability requires eventLoopReady as well.",
             "Display submission is AppKit draw completion, not compositor or screen presentation.",
             "Resident bytes are point-in-time RSS, not memory pressure or physical footprint.",
             "Benchmark processes use current local settings and do not alter them.",

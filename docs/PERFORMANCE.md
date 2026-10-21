@@ -4,7 +4,7 @@ Build optimized code, then run on a logged-in macOS desktop:
 
 ```sh
 ./scripts/build-app.sh release
-python3 scripts/benchmark.py --runs 10 --warm 20
+python3 scripts/benchmark.py --runs 10 --warm 20 --require-readiness
 ```
 
 This runs ten fresh processes and twenty warm document invocations per process.
@@ -17,6 +17,12 @@ The harness fingerprints `~/.config/skriv/config.skriv` and rejects changes
 during a run; the comparison script also checks it across builds.
 Always build release immediately beforehand; the script does not infer the
 optimization level from a binary.
+The build script now defaults to release; explicit `debug` builds remain available.
+Current benchmark builds use a centered 1,000 × 700 window, bounded by the primary
+display's visible frame, and neither restore nor save window preferences. This
+keeps before/after geometry identical without changing the interactive app's frame.
+Older builds do not implement this geometry isolation; use matching instrumentation
+when comparing startup changes.
 
 Timing boundaries:
 
@@ -38,6 +44,14 @@ Timing boundaries:
   application drawing, **not** compositor presentation or pixels reaching the
   screen. Actual visible latency still needs Instruments/OS presentation
   tracing or external high-speed video.
+- `eventLoopReady`: a main-queue callback after initial drawing observes an active
+  application, a key document window, and the editor as first responder. This
+  includes the remaining startup callback and activation work that `inputReady`
+  can miss. It does not measure hardware input delivery or first-keystroke latency.
+- `interfaceComplete`: the complete initial interface has submitted its drawing.
+  This is distinct from event-loop readiness; both are needed for a usable window.
+- `fullyReady`: the later of `eventLoopReady` and `interfaceComplete`, derived by
+  the Python harness in summaries. Application-emitted JSONL remains unmodified.
 - Memory: `mach_task_basic_info.resident_size` sampled with an empty document open,
   after all benchmark documents close, with a 1,000-line Norwegian/emoji document open, and after
   warm runs. Representative-document and final-idle samples allow one second for
@@ -46,10 +60,26 @@ Timing boundaries:
 
 The warm input target is under 100 ms, assessed against p95 as well as median.
 Do not claim a visible-presentation target based on `displaySubmitted`.
-Instrumentation collects timestamps before writing diagnostics, and is disabled
+Instrumentation collects all readiness timestamps before writing diagnostics, and is disabled
 unless `SKRIV_METRICS_PATH` is set. Normal operation has no measurement timer,
 polling loop, or subprocess. Configuration is read at startup and explicit reload;
 opening additional documents uses the resolved in-memory settings.
+Pending measurements belong to their opening window and are cancelled on close.
+Readiness uses AppKit notifications and main-queue callbacks, without a timer or
+polling in normal use. The benchmark driver waits for readiness before starting
+its representative-document memory workload. `--require-readiness` verifies the
+presence and ordering of the new endpoints; omit it for historical builds.
+Additional `coldStartupDetail` samples break down the existing `beforeWindow`
+aggregate into application/delegate initialization, launch dispatch,
+configuration, AppKit launch completion, menu creation, and document/controller
+construction, including stored-property initialization.
+
+The comparison harness uses unique bundle identities, reverses order on each
+pair, retains first launches in the aggregate, and reports them separately under
+`firstLaunch`. `pairedChanges` reports after-minus-before cold timings and a
+deterministic 5,000-resample percentile bootstrap interval for the median paired
+difference. Negative deltas favor the new build. These intervals describe this
+desktop workload, not all machines or filesystem-cold launches.
 
 The measurements below predate the standalone `config.skriv` format. References
 to imported settings describe those historical measurements; the import feature
@@ -332,3 +362,94 @@ after warm opens. These are transient process samples, not a memory budget or
 a measurement of the large-file command caches.
 
 [Launch report and raw samples](../build/benchmarks/launch-20261021-4dkfs2ph/run-jygbkh2o/summary.json).
+
+## Startup investigation — 2026-10-21
+
+The retained changes are release-by-default packaging and more accurate startup
+diagnostics. **No release-to-release startup speedup is claimed.** The existing
+window and editor initialization behavior remains in place; neither experimental
+UI optimization met the measurement gate, and neither is shipped.
+
+The app initially found in `build/Skriv.app` matched the debug executable's Mach-O
+UUID and its `-Onone` build. Defaulting packaging to release prevents that mistake;
+the comparisons below use release builds on both sides and do not attribute a
+compiler-configuration change to a runtime optimization.
+
+Time Profiler found AppKit launch/menu initialization, including the system's
+Writing Tools framework loading, plus native window construction and display.
+The more detailed control measurements put `NSApplication` initialization at
+34.889 ms median, AppKit launch completion at 22.272 ms, window construction at
+23.561 ms, and show/focus at 18.364 ms. Configuration loading was 0.483 ms. These
+individual medians do not sum to the overall median. There was no CPU-heavy,
+app-owned task on the empty-document startup path that justified adding Rust.
+System Writing Tools support remains unchanged.
+
+### Experiments and decisions
+
+Apple M3 Pro, arm64, macOS 26.5, Swift 6.3.3. Each experiment used 30 alternating
+before/after pairs, with ten warm opens per process: 30 cold and 300 warm samples
+per build. Both sides used identical new instrumentation, readiness waiting,
+current configuration, and isolated 1,000 × 700 window geometry. The control
+retained the original UI and activation sequence. No unrelated apps were stopped.
+
+Values below are median **paired after-minus-before differences**, in milliseconds,
+with 95% percentile bootstrap intervals. Negative values favor the candidate.
+
+| Candidate | Input-ready delta [95% interval] | Fully-ready delta [95% interval] | Decision |
+| --- | ---: | ---: | --- |
+| Deferred status/ruler labels, earlier activation, consolidated settings | +6.233 [2.823, 13.648] | +1.114 [-3.236, 7.246] | Reverted |
+| Lightweight status drawing, batched initial presentation, lazy ruler fonts | −0.294 [−6.927, 3.139] | +0.371 [−4.398, 7.525] | Reverted |
+
+The staged interface delayed completion until a later queue turn without improving
+full readiness. The lightweight status candidate looked promising in its small
+pilot, but the 30-pair comparison did not reproduce a reliable end-to-end gain.
+Their supporting UI changes and experiment-specific tests were removed together.
+
+The second comparison's control establishes this workload's instrumented baseline:
+
+| Boundary | Median | p95 |
+| --- | ---: | ---: |
+| Process creation → input readiness | 121.608 ms | 136.543 ms |
+| Process creation → complete-interface submission | 122.883 ms | 137.853 ms |
+| Process creation → full readiness | 204.020 ms | 230.546 ms |
+| Warm action → input readiness | 12.208 ms | 29.651 ms |
+| Warm action → full readiness | 20.267 ms | 35.162 ms |
+
+The readiness gap demonstrates why first-responder assignment alone is insufficient
+to measure usable startup. The first newly signed control/candidate launches in
+that comparison took 755.994 / 620.788 ms to full readiness. They remain included
+in the aggregate and are reported separately; neither filesystem caches nor the
+rest of the desktop were reset. These numbers are not directly comparable with
+older full-screen-sized window workloads or compositor presentation timings.
+
+Raw reports and their per-process samples:
+[staged-interface comparison](../build/benchmarks/startup-final/comparison-vkok3zsw/summary.json),
+[lightweight-status comparison](../build/benchmarks/startup-status-final/comparison-36ixur3i/summary.json).
+The local build artifacts are ignored by version control; the table records the
+findings for checkouts without those files.
+
+### Retained-build validation
+
+All 84 existing Swift tests pass. Default release packaging and code signing
+succeed. A final two-pair readiness smoke check validates all four emitted
+boundaries and their ordering over four processes and 40 warm opens; it is not
+a performance claim. The aggregation checks cover the derived maximum, incomplete
+readiness samples, and deterministic paired intervals. An isolated normal app
+launch also passed focused typing, Norwegian text, emoji paste, native Find,
+Normal-mode switching, undo back to an empty document, and a new focused window.
+Hardware input latency, VoiceOver speech, real IME composition, and physical
+screen presentation were not timed by this check.
+
+[Retained-build smoke report](../build/benchmarks/startup-retained-smoke/comparison-gtoym08c/summary.json).
+
+For the next startup experiment, preserve an instrumented release before changing
+behavior, then compare with the same geometry and endpoints:
+
+```sh
+./scripts/build-app.sh
+ditto build/Skriv.app build/startup-before/Skriv.app
+# Make the candidate change, then rebuild:
+./scripts/build-app.sh
+python3 scripts/compare-launch.py --before build/startup-before/Skriv.app \
+  --pairs 30 --warm 10 --require-readiness
+```
