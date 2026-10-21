@@ -1,7 +1,7 @@
 import AppKit
 
 @MainActor
-public final class AppDelegate: NSObject, NSApplicationDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Construct this before anyone requests NSDocumentController.shared.
     private let documents = SkrivDocumentController()
     private let configuration = ConfigurationController()
@@ -19,7 +19,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         LaunchMetrics.shared.markStartupCheckpoint("finishLaunching")
-        NSWindow.allowsAutomaticWindowTabbing = false
         NSApp.mainMenu = makeMenu()
         LaunchMetrics.shared.markStartupCheckpoint("menu")
         if documents.documents.isEmpty {
@@ -34,6 +33,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    public func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        documents.openDocuments(at: filenames.map { URL(fileURLWithPath: $0) }) { success in
+            sender.reply(toOpenOrPrint: success ? .success : .failure)
+        }
     }
 
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -104,14 +109,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "Quit Skriv", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         let file = submenu("File", in: menu)
-        file.addItem(withTitle: "New", action: #selector(NSDocumentController.newDocument(_:)), keyEquivalent: "n")
+        file.addItem(withTitle: "New Document", action: #selector(NSDocumentController.newDocument(_:)), keyEquivalent: "n")
+        file.addItem(withTitle: "New Tab", action: #selector(SkrivDocumentController.newWindowForTab(_:)), keyEquivalent: "t").target = documents
+        let newWindow = file.addItem(withTitle: "New Window", action: #selector(SkrivDocumentController.newWindow(_:)), keyEquivalent: "n")
+        newWindow.keyEquivalentModifierMask = [.command, .shift]
+        newWindow.target = documents
         file.addItem(withTitle: "Open…", action: #selector(NSDocumentController.openDocument(_:)), keyEquivalent: "o")
         file.addItem(.separator())
         file.addItem(withTitle: "Save…", action: #selector(NSDocument.save(_:)), keyEquivalent: "s")
         let saveAs = file.addItem(withTitle: "Save As…", action: #selector(NSDocument.saveAs(_:)), keyEquivalent: "s")
         saveAs.keyEquivalentModifierMask = [.command, .shift]
         file.addItem(.separator())
-        file.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        file.addItem(withTitle: "Close Tab", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         file.addItem(withTitle: "Discard Changes…", action: #selector(DocumentWindowController.discardChanges(_:)), keyEquivalent: "")
 
         let edit = submenu("Edit", in: menu)
@@ -143,6 +152,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let window = submenu("Window", in: menu)
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        window.addItem(.separator())
+        let nextTab = window.addItem(withTitle: "Next Tab", action: #selector(DocumentWindowController.nextTab(_:)), keyEquivalent: "\t")
+        nextTab.keyEquivalentModifierMask = [.control]
+        let previousTab = window.addItem(withTitle: "Previous Tab", action: #selector(DocumentWindowController.previousTab(_:)), keyEquivalent: "\t")
+        previousTab.keyEquivalentModifierMask = [.control, .shift]
+        window.addItem(withTitle: "Move Tab to New Window", action: #selector(NSWindow.moveTabToNewWindow(_:)), keyEquivalent: "")
+        window.addItem(withTitle: "Merge All Windows", action: #selector(NSWindow.mergeAllWindows(_:)), keyEquivalent: "")
+        window.delegate = self
         NSApp.windowsMenu = window
         return menu
     }
@@ -154,37 +171,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(item)
         return submenu
     }
-}
 
-@MainActor
-final class SkrivDocumentController: NSDocumentController {
-    /// Applied to every new document; nil means the built-in editor settings.
-    var currentSettings: EditorSettings?
-
-    func applySettings(_ settings: EditorSettings) {
-        currentSettings = settings
-        for document in documents {
-            for controller in document.windowControllers {
-                (controller as? DocumentWindowController)?.applySettings(settings)
-            }
+    public func menuNeedsUpdate(_ menu: NSMenu) {
+        // AppKit inserts these automatically when tabbing is enabled. Keep our
+        // navigation shortcuts and automatic bar visibility, without duplicate items.
+        let automaticActions = [#selector(NSWindow.toggleTabBar(_:)),
+                                #selector(NSWindow.selectNextTab(_:)),
+                                #selector(NSWindow.selectPreviousTab(_:))]
+        for item in menu.items where item.action.map(automaticActions.contains) == true {
+            menu.removeItem(item)
         }
-    }
-
-    /// Open our custom extension as plain text, reusing an existing document with unsaved edits.
-    func openConfiguration(at url: URL) throws {
-        if let existing = document(for: url) {
-            existing.showWindows()
-            return
-        }
-        let document = try SkrivDocument(contentsOf: url, ofType: SkrivDocument.configurationTypeName)
-        addDocument(document)
-        document.makeWindowControllers()
-        document.showWindows()
-    }
-
-    override var defaultType: String? { SkrivDocument.typeName }
-
-    override func documentClass(forType typeName: String) -> AnyClass? {
-        SkrivDocument.self
     }
 }

@@ -39,16 +39,28 @@ The source mark is from [Streamline](https://streamlinehq.com).
   Built-in settings wrap at word boundaries. Wrapping changes only presentation,
   never the saved text. Configure `writing-width`, `wrap`, and `word-wrap` in
   `config.skriv`; disabling wrapping restores horizontal scrolling.
-- `⌘N` creates a document; `⌘O` opens UTF-8 text; `⌘S` saves; `⇧⌘S` saves under a
-  new name. Unsupported encodings produce an error rather than replacing text.
-- `⌘W` closes, protecting unsaved changes with a native prompt.
+- Documents use native macOS tabs. The tab bar appears when a window has multiple
+  documents and hides again when only one remains.
+  `⌘T`, `⌘N`, and the tab bar's **+** create and focus an untitled tab immediately
+  after the active tab. `⇧⌘N` creates a separate window.
+- `Ctrl-Tab` / `Ctrl-Shift-Tab` switch tabs in visible order, wrapping at either end.
+  Each document retains its text, undo, selection, scroll position, Vim mode, and
+  search state. Drag tabs to reorder or detach them; **Window → Move Tab to New
+  Window** and **Merge All Windows** also manage native tab groups.
+- `⌘O` and Finder open UTF-8 files as tabs in the active document window, or create
+  a window if none is open. Opening an already-open file selects its existing tab
+  in its original window, preserving unsaved changes. `⌘S` saves; `⇧⌘S` saves under
+  a new name. Unsupported encodings produce an error rather than replacing text.
+- `⌘W` and a tab’s close button close that document, protecting unsaved changes with a native prompt.
   Edited documents offer **Save**, **Cancel**, and **Don’t Save** (`⌘D`). The save panel
   appears only after choosing Save; Don’t Save never deletes an existing file.
   **File → Discard Changes…** discards changes after confirmation; it never deletes
   a previously saved file. `⌘Q` prompts for unsaved documents before quitting.
 - The app remains resident after all documents close. Reopening it from the Dock or
   a launcher creates a document when no windows are visible; otherwise it brings
-  existing documents forward. Use **File → New** (`⌘N`) for another document.
+  existing documents forward. Closing the last tab closes its window; no empty
+  replacement document is created. Tabs are session-only: Skriv does not save a tab
+  list or unsaved buffers for restoration after quitting.
 - Global shortcuts belong to your launcher, such as Alfred or Raycast. Skriv does
   not register system-wide shortcuts. Launch-at-login is not configured.
 - When line numbers are enabled, the active logical line number is **bold**.
@@ -146,7 +158,8 @@ not search XDG overrides, project directories, or Application Support for config
 No file is required: missing settings use the built-in defaults.
 
 **Skriv → Open Configuration…** (`⌘,`) creates a commented template if needed
-and opens it as a plain-text document in Skriv. Existing files and comments are never
+and opens it as a plain-text tab in Skriv. Reopening it selects its existing tab.
+Existing files and comments are never
 rewritten. Save with `⌘S`, then choose **Skriv → Reload Configuration** (`⇧⌘,`).
 Reload reads the saved file, applies settings to existing and future documents, and
 preserves document text, selections, undo history, and edited status.

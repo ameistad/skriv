@@ -5,7 +5,7 @@
 A fast, lightweight macOS text editor with native editing and a focused Vim subset.
 Built with Swift and AppKit, with no external dependencies.
 
-- Opens focused documents at the remembered window size and position, ready for writing.
+- Native document tabs, with separate windows and a remembered window size and position.
 - Centers writing in a responsive 72-character column, with word wrapping by default.
 - Dark by default, with Etterglød colors and a simple `~/.config/skriv/config.skriv` configuration file.
 - Vim motions, Visual selection, literal search, and native Find/Replace.
@@ -25,7 +25,8 @@ The build script defaults to release; use `./scripts/build-app.sh debug` for an 
 
 ## Basics
 
-`⌘N` creates a document, `⌘S` saves, and `⌘F` finds text.
+`⌘T` or `⌘N` creates a tab, `⌘W` closes it, and `⇧⌘N` creates a separate window.
+`Ctrl-Tab` / `Ctrl-Shift-Tab` switch tabs in visible order. `⌘S` saves and `⌘F` finds text.
 `Esc` enters Normal mode; `i` resumes typing. When line numbers are enabled, the active line number is bold.
 In Normal mode, `:w` saves, `:q` closes, and `:wq` saves and closes (press Return to run).
 `:q` protects unsaved changes; `:q!` discards them. `:x` saves only if changed, then closes.

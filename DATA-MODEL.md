@@ -3,7 +3,7 @@
 ## Concept: Remembered document window frame
 - Meaning: the shared size and position used when opening a document window, across closes and app launches.
 - Decision: AppKit's `NSWindow Frame SkrivDocument` application UserDefaults entry owns this UI state. It is separate from user-authored editor settings in `config.skriv`; no document paths or contents are stored.
-- Source of truth: the frame most recently saved by a visible document window on move, resize, or close. New windows restore it using AppKit's frame APIs; absent saved state retains the maximized-on-pointer-display default. Full-screen transitions do not replace the regular frame.
+- Source of truth: the frame most recently saved by a visible, selected document window on move, resize, or close. Hidden tabs and tab-bar adjustments do not save geometry. New windows restore it using AppKit's frame APIs; absent saved state retains the maximized-on-pointer-display default. Full-screen transitions do not replace the regular frame.
 - Owner: `DocumentWindowController`, using `NSWindow.saveFrame(usingName:)` and `setFrameUsingName(_:)`. All document windows share the same key rather than competing for an exclusive AppKit autosave name.
 - Enforced by: `SettingsPresentationTests` (first-window fallback, close/reopen, multiple windows, and full-screen frame preservation).
 - Decided: 2026-10-21, remember window size after closing.
@@ -15,6 +15,16 @@
 - Documents are independent. Closing/discarding does not delete a saved file.
 - Enforced by: `SkrivDocumentTests`.
 - Decided: 2026-10-20, native document foundation; terminology updated 2026-10-21.
+
+## Concept: Document tabs
+- Meaning: a session-only grouping of independent documents in one visible native window.
+- Owner/source of truth: AppKit's `NSWindowTabGroup.windows` owns tab membership and visible order; `selectedWindow` owns the active tab. Each tab retains its own `SkrivDocument`, window controller, text storage, undo manager, and editor.
+- Tab bar visibility is derived from the native group's document count: hidden with one document, visible with two or more.
+- `SkrivDocumentController` explicitly routes new documents and opened files into the active group. New Window bypasses grouping. An already-open file is selected in its original group, preserving unsaved edits.
+- `TabDestination` holds an opening operation's insertion point and native group, including while an Open panel or file read is pending. It is transient routing context, not another collection of open tabs. If its original tab closes, a surviving sibling is used; if the group closes, a new window is created.
+- No tab identifiers, document paths, tab order, or unsaved contents are persisted for session restoration. Closing a tab uses the existing document save/discard lifecycle; closing the last tab closes its window without quitting the app.
+- Enforced by: `DocumentTabTests` and existing document/editor tests.
+- Decided: 2026-10-21, native document tabs.
 
 ## Concept: Transient editing and search state
 - Owner: each document's `VimTextView` owns its `VimEngine` and `LiteralSearch`.

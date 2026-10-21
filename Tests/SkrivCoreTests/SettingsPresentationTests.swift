@@ -77,6 +77,30 @@ struct SettingsPresentationTests {
         #expect(restored.window?.frame == regularFrame)
     }
 
+    @Test func addingAndClosingTabsInFullScreenPreservesTheRegularFrame() throws {
+        let name = "SkrivTest-\(UUID().uuidString)"
+        defer { NSWindow.removeFrame(usingName: name) }
+        let (first, firstController) = try editor(savedFrameName: name)
+        let (second, secondController) = try editor(savedFrameName: name)
+        defer { first.close(); second.close() }
+        let firstWindow = try #require(firstController.window)
+        let secondWindow = try #require(secondController.window)
+        firstController.showWindow(nil)
+        firstWindow.setFrame(NSRect(x: 100, y: 150, width: 640, height: 480), display: false)
+        let regularFrame = firstWindow.frame
+        firstController.windowWillEnterFullScreen(Notification(name: NSWindow.willEnterFullScreenNotification,
+                                                               object: firstWindow))
+        firstWindow.addTabbedWindow(secondWindow, ordered: .above)
+        secondController.showWindow(nil)
+        secondWindow.setFrame(NSRect(x: 0, y: 0, width: 1000, height: 700), display: false)
+        second.close()
+        first.close()
+
+        let (reopened, restored) = try editor(savedFrameName: name)
+        defer { reopened.close() }
+        #expect(restored.window?.frame == regularFrame)
+    }
+
     private func editor(savedFrameName: NSWindow.FrameAutosaveName = "SkrivDocument") throws -> (SkrivDocument, DocumentWindowController) {
         _ = NSApplication.shared
         let document = SkrivDocument()
@@ -222,14 +246,9 @@ struct SettingsPresentationTests {
         let configuration = ConfigurationController(url: url)
         try configuration.createIfMissing()
         let documents = TestApplication.documents
-        defer {
-            for document in documents.documents {
-                document.close()
-                documents.removeDocument(document)
-            }
-        }
         try documents.openConfiguration(at: url)
-        let document = try #require(documents.documents.first as? SkrivDocument)
+        let document = try #require(documents.document(for: url) as? SkrivDocument)
+        defer { document.close() }
         #expect(document.fileURL == url)
         #expect(document.fileType == SkrivDocument.configurationTypeName)
         #expect(document.fileNameExtension(forType: SkrivDocument.configurationTypeName,
@@ -237,7 +256,7 @@ struct SettingsPresentationTests {
         #expect(document.textStorage.string == SkrivConfiguration.template)
         document.textStorage.mutableString.setString("font-size = 22\n")
         try documents.openConfiguration(at: url)
-        #expect(documents.documents.count == 1)
+        #expect(documents.documents.filter { $0.fileURL == url }.count == 1)
         #expect(document.textStorage.string == "font-size = 22\n")
         document.updateChangeCount(.changeDone)
         try await document.save(to: url, ofType: SkrivDocument.configurationTypeName, for: .saveOperation)

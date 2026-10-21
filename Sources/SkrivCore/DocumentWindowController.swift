@@ -1,9 +1,11 @@
 import AppKit
 
 @MainActor
-final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NSTextFieldDelegate {
+final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NSTextFieldDelegate, NSMenuItemValidation {
     private let savedFrameName: NSWindow.FrameAutosaveName
     private var isInFullScreen = false
+    private var isAdjustingTabBar = false
+    private(set) var isClosing = false
     let textView: VimTextView
     private let scrollView: NSScrollView
     private let modeLabel = NSTextField(labelWithString: "INSERT")
@@ -41,6 +43,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         if !LaunchBenchmark.isRequested { window.setFrameUsingName(savedFrameName) }
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
+        window.tabbingIdentifier = "SkrivDocument"
         window.animationBehavior = .none
         window.backgroundColor = EditorTheme.background
         LaunchMetrics.shared.markPhase("window")
@@ -128,27 +131,95 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
     // Explicit saving lets all document windows share one preference; AppKit's
     // automatic frame saving only accepts a name for one open window at a time.
     private func saveWindowFrame() {
-        guard !LaunchBenchmark.isRequested, let window, window.isVisible, !isInFullScreen,
-              !window.styleMask.contains(.fullScreen) else { return }
+        guard !LaunchBenchmark.isRequested, !isAdjustingTabBar,
+              let window, window.isVisible, !isGroupInFullScreen,
+              window.tabGroup?.selectedWindow == nil || window.tabGroup?.selectedWindow === window else { return }
         window.saveFrame(usingName: savedFrameName)
+    }
+
+    private var isGroupInFullScreen: Bool {
+        guard let window else { return isInFullScreen }
+        return isInFullScreen || (window.tabGroup?.windows ?? [window]).contains {
+            $0.styleMask.contains(.fullScreen)
+                || ($0.windowController as? DocumentWindowController)?.isInFullScreen == true
+        }
     }
 
     func windowDidMove(_ notification: Notification) { saveWindowFrame() }
     func windowDidResize(_ notification: Notification) { saveWindowFrame() }
-    func windowWillClose(_ notification: Notification) { saveWindowFrame() }
+    func windowWillClose(_ notification: Notification) {
+        saveWindowFrame()
+        isClosing = true
+        let survivors = window?.tabGroup?.windows.filter { $0 !== window } ?? []
+        // Wait until AppKit finishes removing the tab before updating the
+        // surviving group's bar for its new document count.
+        Task { @MainActor in
+            for survivor in survivors where TabDestination.isOpen(survivor) {
+                (survivor.windowController as? DocumentWindowController)?.updateTabBarVisibility()
+            }
+        }
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) { updateTabBarVisibility() }
+
+    // Detaching a tab can change the group size without changing the key window.
+    // Check after AppKit finishes updating the window, including native tab moves.
+    func windowDidUpdate(_ notification: Notification) { updateTabBarVisibility() }
 
     func windowWillEnterFullScreen(_ notification: Notification) {
         saveWindowFrame()
-        isInFullScreen = true
+        setGroupFullScreen(true)
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
-        isInFullScreen = false
+        setGroupFullScreen(false)
         saveWindowFrame()
     }
 
     func windowDidFailToEnterFullScreen(_ window: NSWindow) {
-        isInFullScreen = false
+        setGroupFullScreen(false)
+    }
+
+    private func setGroupFullScreen(_ value: Bool) {
+        isInFullScreen = value
+        for member in window?.tabGroup?.windows ?? [] {
+            (member.windowController as? DocumentWindowController)?.isInFullScreen = value
+        }
+    }
+
+    private func updateTabBarVisibility() {
+        guard !isClosing, !isAdjustingTabBar, let window,
+              let group = window.tabGroup,
+              group.isTabBarVisible != (group.windows.count > 1) else { return }
+        isAdjustingTabBar = true
+        defer { isAdjustingTabBar = false }
+        let frame = window.frame
+        window.toggleTabBar(nil)
+        if !isGroupInFullScreen { window.setFrame(frame, display: false) }
+    }
+
+    override func newWindowForTab(_ sender: Any?) {
+        (NSDocumentController.shared as? SkrivDocumentController)?.newTab(in: window)
+    }
+
+    @objc func nextTab(_ sender: Any?) { selectTab(offset: 1) }
+    @objc func previousTab(_ sender: Any?) { selectTab(offset: -1) }
+
+    private func selectTab(offset: Int) {
+        guard let window, let group = window.tabGroup, group.windows.count > 1,
+              !group.windows.contains(where: { $0.attachedSheet != nil }),
+              let index = group.windows.firstIndex(of: window) else { return }
+        let target = group.windows[(index + offset + group.windows.count) % group.windows.count]
+        group.selectedWindow = target
+        target.makeKeyAndOrderFront(nil)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(nextTab(_:)) || menuItem.action == #selector(previousTab(_:)) {
+            return (window?.tabGroup?.windows.count ?? 0) > 1
+                && !(window?.tabGroup?.windows.contains { $0.attachedSheet != nil } ?? false)
+        }
+        return true
     }
 
     private func showPrompt(_ prompt: Prompt) {
@@ -290,7 +361,18 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     override func showWindow(_ sender: Any?) {
+        // A new tab may join after its siblings received willEnterFullScreen.
+        // Retain that protection even if AppKit removes it from the group before
+        // delivering windowWillClose.
+        isInFullScreen = isGroupInFullScreen
+        // Suppress the system's automatic grouping only while ordering the window
+        // front. Afterwards native tab UI is enabled, with the bar shown only
+        // when this window contains multiple documents.
+        window?.tabbingMode = .disallowed
+        if let window { window.tabGroup?.selectedWindow = window }
         super.showWindow(sender)
+        window?.tabbingMode = .automatic
+        updateTabBarVisibility()
         window?.makeFirstResponder(textView)
         LaunchMetrics.shared.markPhase("showAndFocus")
         LaunchMetrics.shared.markInputReady()
