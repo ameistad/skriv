@@ -138,7 +138,7 @@ struct SkrivConfiguration: Equatable, Sendable {
     # line-number-background =
 
     # Nonrecursive single-key Normal-mode mappings; Insert/Visual/operator keys are unchanged.
-    # Targets: h j k l w b e W B E 0 $ ^ i a I A o O x X p P u D C Y G d c y v V n N / ?
+    # Targets: h j k l w b e W B E 0 $ ^ i a I A o O x X p P u D C Y G d c y v V n N / ? :
     # keybind = H=h
     # keybind = L=l
     # keybind =
