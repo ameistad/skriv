@@ -37,6 +37,7 @@ enum VimEffect: Equatable {
     case undo
     case redo
     case select(range: NSRange, caret: Int)
+    case beginCommand
     case beginSearch(forward: Bool, count: Int)
     case repeatSearch(reverse: Bool, count: Int)
 }
@@ -119,6 +120,7 @@ struct VimEngine {
         if operation != nil { clearPending(); return .handled }
         desiredColumn = nil
         switch key {
+        case ":": return explicitCount ? .handled : .beginCommand
         case "v", "V":
             mode = key == "v" ? .visual : .visualLine
             visualAnchor = b.offset(i)

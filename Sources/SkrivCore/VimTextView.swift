@@ -7,6 +7,7 @@ final class VimTextView: NSTextView {
     private(set) var engine = VimEngine()
     var onModeChange: ((String) -> Void)?
     var onSearchRequest: ((Bool, Int) -> Void)?
+    var onCommandRequest: (() -> Void)?
     var onSearchResult: ((String) -> Void)?
     private(set) var search = LiteralSearch()
     var normalKeyMappings: [String: String] = [:]
@@ -122,6 +123,8 @@ final class VimTextView: NSTextView {
             scrollRangeToVisible(NSRange(location: caret, length: 0))
         case .beginSearch(let forward, let count):
             onSearchRequest?(forward, count)
+        case .beginCommand:
+            onCommandRequest?()
         case .repeatSearch(let reverse, let count):
             showSearchMatch(search.repeatMatch(reverse: reverse, text: string, caret: selectedRange().location, count: count))
         }

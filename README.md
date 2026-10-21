@@ -26,6 +26,8 @@ The local build is ad-hoc signed. Save open documents and quit an older build be
 
 `⌘N` creates a document, `⌘S` saves, and `⌘F` finds text.
 `Esc` enters Normal mode; `i` resumes typing. When line numbers are enabled, the active line number is bold.
+In Normal mode, `:w` saves, `:q` closes, and `:wq` saves and closes (press Return to run).
+`:q` protects unsaved changes; `:q!` discards them. `:x` saves only if changed, then closes.
 Use an external launcher such as Alfred or Raycast to assign a global shortcut to Skriv.
 
 Use `⌘,` to open the configuration and `⇧⌘,` to reload it after saving.

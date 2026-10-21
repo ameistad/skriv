@@ -7,12 +7,17 @@ final class DocumentWindowController: NSWindowController, NSTextViewDelegate, NS
     private let modeLabel = NSTextField(labelWithString: "INSERT")
     private var numberRuler: LineNumberRuler?
     private var editorBottom: NSLayoutConstraint?
-    private var searchBottom: NSLayoutConstraint?
-    private var searchBar: NSView?
-    private var searchField: NSTextField?
-    private var searchDirectionLabel: NSTextField?
-    private var searchForward = true
-    private var searchCount = 1
+    private var promptBottom: NSLayoutConstraint?
+    private var promptBar: NSView?
+    private var promptField: NSTextField?
+    private var promptLabel: NSTextField?
+    private enum Prompt {
+        case search(forward: Bool, count: Int)
+        case command
+    }
+    private var prompt: Prompt = .command
+    private var promptSubmit: NSButton?
+    private var closeAfterCommandSave: Bool?
 
     init(document: SkrivDocument, settings: EditorSettings?) {
         LaunchMetrics.shared.markPhase("beforeWindow")
@@ -101,7 +106,8 @@ final class DocumentWindowController: NSWindowController, NSTextViewDelegate, NS
         textView.delegate = self
         window.initialFirstResponder = textView
         textView.onModeChange = { [weak self] mode in self?.modeLabel.stringValue = mode }
-        textView.onSearchRequest = { [weak self] forward, count in self?.showSearch(forward: forward, count: count) }
+        textView.onSearchRequest = { [weak self] forward, count in self?.showPrompt(.search(forward: forward, count: count)) }
+        textView.onCommandRequest = { [weak self] in self?.showPrompt(.command) }
         textView.onSearchResult = { [weak self] message in
             guard let self else { return }
             self.modeLabel.stringValue = self.textView.engine.mode.label + (message.isEmpty ? "" : " — " + message)
@@ -110,18 +116,16 @@ final class DocumentWindowController: NSWindowController, NSTextViewDelegate, NS
         LaunchMetrics.shared.markPhase("settings")
     }
 
-    private func showSearch(forward: Bool, count: Int) {
+    private func showPrompt(_ prompt: Prompt) {
         guard let content = window?.contentView else { return }
-        if searchBar == nil {
+        if promptBar == nil {
             let bar = NSView()
             let field = NSTextField()
             let direction = NSTextField(labelWithString: "/")
-            let submit = NSButton(title: "Find", target: self, action: #selector(submitSearch(_:)))
-            let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelSearch(_:)))
-            field.placeholderString = "Find literal text"
-            field.setAccessibilityLabel("Vim literal search")
+            let submit = NSButton(title: "Find", target: self, action: #selector(submitPrompt(_:)))
+            let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelPrompt(_:)))
             field.target = self
-            field.action = #selector(submitSearch(_:))
+            field.action = #selector(submitPrompt(_:))
             field.delegate = self
             for view in [direction, field, submit, cancel] {
                 view.translatesAutoresizingMaskIntoConstraints = false
@@ -142,39 +146,105 @@ final class DocumentWindowController: NSWindowController, NSTextViewDelegate, NS
                 submit.trailingAnchor.constraint(equalTo: cancel.leadingAnchor, constant: -8),
                 cancel.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
             ])
-            searchBottom = scrollView.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -4)
-            searchBar = bar
-            searchField = field
-            searchDirectionLabel = direction
+            promptBottom = scrollView.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -4)
+            promptBar = bar
+            promptField = field
+            promptLabel = direction
+            promptSubmit = submit
         }
-        searchForward = forward
-        searchCount = count
-        searchDirectionLabel?.stringValue = forward ? "/" : "?"
-        searchField?.stringValue = ""
-        searchBar?.isHidden = false
+        self.prompt = prompt
+        switch prompt {
+        case .search(let forward, _):
+            promptLabel?.stringValue = forward ? "/" : "?"
+            promptField?.placeholderString = "Find literal text"
+            promptField?.setAccessibilityLabel("Vim literal search")
+            promptSubmit?.title = "Find"
+        case .command:
+            promptLabel?.stringValue = ":"
+            promptField?.placeholderString = "w, q, wq, x, q!"
+            promptField?.setAccessibilityLabel("Vim command")
+            promptSubmit?.title = "Run"
+        }
+        modeLabel.stringValue = textView.engine.mode.label
+        promptField?.stringValue = ""
+        promptBar?.isHidden = false
         editorBottom?.isActive = false
-        searchBottom?.isActive = true
-        window?.makeFirstResponder(searchField)
+        promptBottom?.isActive = true
+        window?.makeFirstResponder(promptField)
     }
 
-    @objc private func submitSearch(_ sender: Any?) {
-        let query = searchField?.stringValue ?? ""
-        closeSearch()
-        textView.submitSearch(query, forward: searchForward, count: searchCount)
+    @objc private func submitPrompt(_ sender: Any?) {
+        let input = promptField?.stringValue ?? ""
+        closePrompt()
+        switch prompt {
+        case .search(let forward, let count):
+            textView.submitSearch(input, forward: forward, count: count)
+        case .command:
+            executeCommand(input)
+        }
     }
 
-    @objc private func cancelSearch(_ sender: Any?) { closeSearch() }
+    @objc private func cancelPrompt(_ sender: Any?) { closePrompt() }
 
-    private func closeSearch() {
-        searchBottom?.isActive = false
+    private func closePrompt() {
+        promptBottom?.isActive = false
         editorBottom?.isActive = true
-        searchBar?.isHidden = true
+        promptBar?.isHidden = true
         window?.makeFirstResponder(textView)
+    }
+
+    func executeCommand(_ input: String) {
+        let input = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else { return }
+        guard let command = ExCommand(input) else {
+            showCommandResult("Unsupported command: :\(input)")
+            return
+        }
+        guard let document = document as? NSDocument else { return }
+        guard closeAfterCommandSave == nil, window?.attachedSheet == nil else {
+            showCommandResult("Finish the current document operation first")
+            return
+        }
+        switch command {
+        case .quit(let force):
+            guard force || !document.isDocumentEdited else {
+                showCommandResult("Unsaved changes; use :w to save or :q! to discard")
+                return
+            }
+            document.close()
+        case .exit where !document.isDocumentEdited:
+            document.close()
+        case .write, .writeQuit, .exit:
+            textView.breakUndoCoalescing()
+            closeAfterCommandSave = command != .write
+            document.save(withDelegate: self,
+                          didSave: #selector(finishedCommandSave(_:didSave:contextInfo:)), contextInfo: nil)
+        }
+    }
+
+    @objc private func finishedCommandSave(_ document: NSDocument, didSave: Bool,
+                                          contextInfo: UnsafeMutableRawPointer?) {
+        guard let shouldClose = closeAfterCommandSave else { return }
+        closeAfterCommandSave = nil
+        guard didSave else {
+            showCommandResult("Save cancelled or failed; document remains open")
+            return
+        }
+        // A save can complete asynchronously; never discard edits made during it.
+        if shouldClose && !document.isDocumentEdited {
+            document.close()
+        } else {
+            showCommandResult(document.isDocumentEdited ? "Unsaved changes remain" : "Saved")
+        }
+    }
+
+    private func showCommandResult(_ message: String) {
+        modeLabel.stringValue = textView.engine.mode.label + " — " + message
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            closeSearch()
+            closePrompt()
             return true
         }
         return false

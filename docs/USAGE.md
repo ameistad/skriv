@@ -77,6 +77,8 @@ and joined emoji.
 | Counts | `3w`, `2dd`, `d2w`, `2d3w`, `3p` |
 | Literal search forward / backward | `/`, `?`, then text and Return |
 | Repeat search / reverse direction | `n`, `N`, with optional counts |
+| Save / close / save and close | `:w`, `:q`, `:wq`, then Return |
+| Save if changed and close / discard and close | `:x`, `:q!`, then Return |
 | Character / whole-line Visual selection | `v`, `V`, then supported motions |
 | Switch active selection endpoint | `o` in Visual mode |
 | Yank / delete / change selection | `y`, `d` or `x`, `c` in Visual mode |
@@ -92,13 +94,32 @@ selection type; repeating the current type or pressing `Esc` returns to Normal.
 leaves Visual mode.
 
 This is not full Vim: block Visual mode, Visual paste, search within Visual mode,
-search as an operator motion, regular expressions, Ex commands, text objects,
+search as an operator motion, regular expressions, general Ex commands, text objects,
 macros, named registers, dot-repeat, insert repetition, `>>`/`<<`, and counted undo are
 not implemented. Unsupported Normal-mode keys cancel pending commands without
 inserting text. Undo uses native AppKit groups, so a change operator and later
 inserted text may undo separately. `G`/`gg` and line deletion use first-nonblank
 positioning (Vim `startofline` behavior); vertical motions count graphemes, not
 terminal display cells. Native input methods get first refusal while composing.
+
+### Save and close commands
+
+In Normal mode, `:` opens the command field. Return runs the command; Escape or
+Cancel returns to the editor. Commands apply to the current document:
+
+| Command | Behavior |
+| --- | --- |
+| `:w`, `:write` | Save using the native save flow; an untitled document opens the Save panel. |
+| `:q`, `:quit` | Close if there are no unsaved changes; otherwise show a message and keep the document open. |
+| `:q!`, `:quit!` | Discard unsaved changes and close. An existing file is left unchanged. |
+| `:wq` | Save, then close only after a successful save. |
+| `:x`, `:xit`, `:exit` | Save if changed, then close; an unchanged document closes without writing. |
+
+Cancelled or failed saves leave the document open. Closing the last document leaves
+Skriv running, like `⌘W`; `⌘Q` quits the app. Filename arguments, ranges, counts,
+command chains, shell commands, and other Ex commands are not supported. Unsupported
+input shows a status message without saving, closing, or editing document text.
+Command entry is supported in Normal mode, outside pending operators or counts.
 
 ## Find and replace
 
@@ -177,7 +198,7 @@ keybind = L=l
 
 Remaps are applied once, only in Normal mode outside an operator-pending command.
 They do not affect Insert or Visual mode, native Command shortcuts, or count keys.
-Targets are `h j k l w b e W B E 0 $ ^ i a I A o O x X p P u D C Y G d c y v V n N / ?`.
+Targets are `h j k l w b e W B E 0 $ ^ i a I A o O x X p P u D C Y G d c y v V n N / ? :`.
 Key sequences, callbacks, and plugin commands are not supported.
 The `global-shortcut` setting has been removed. Delete or comment out any existing
 entry, including `none` or an empty value, then save and reload. An uncommented
@@ -276,8 +297,13 @@ and window sizing. The earlier conformance run
 reported **2,158 cases and zero differences**, including Visual edits, within
 its documented scope.
 
-The 2026-10-21 revision passes **69 tests**, including an Address Sanitizer run,
-and builds with `./scripts/build-app.sh release`. An isolated release-app smoke check
+Save/close command coverage adds parser rejection, prompt submit/cancel and search
+switching, unsaved-change protection, asynchronous save outcomes, real UTF-8
+`:w`/`:wq` saves, and forced close preserving files and other documents.
+The suite now passes **78 tests**.
+
+The earlier 2026-10-21 revision passed **69 tests**, including an Address Sanitizer run,
+and built with `./scripts/build-app.sh release`. An isolated release-app smoke check
 verified the document menu labels and accessibility label, UTF-8 saving, close/cancel
 and discard prompts, reopening with and without visible windows, live configuration
 reload, and rejection of `global-shortcut` while keeping the previous settings active.
