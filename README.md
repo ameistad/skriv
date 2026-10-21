@@ -5,7 +5,7 @@
 A fast, lightweight macOS text editor with native editing and a focused Vim subset.
 Built with Swift and AppKit, with no external dependencies.
 
-- Opens focused, maximized documents, ready for writing.
+- Opens focused documents at the remembered window size and position, ready for writing.
 - Centers writing in a responsive 72-character column, with word wrapping by default.
 - Dark by default, with Etterglød colors and a simple `~/.config/skriv/config.skriv` configuration file.
 - Vim motions, Visual selection, literal search, and native Find/Replace.

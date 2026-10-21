@@ -1,7 +1,9 @@
 import AppKit
 
 @MainActor
-final class DocumentWindowController: NSWindowController, NSTextViewDelegate, NSTextFieldDelegate {
+final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NSTextFieldDelegate {
+    private let savedFrameName: NSWindow.FrameAutosaveName
+    private var isInFullScreen = false
     let textView: VimTextView
     private let scrollView: NSScrollView
     private let modeLabel = NSTextField(labelWithString: "INSERT")
@@ -19,7 +21,9 @@ final class DocumentWindowController: NSWindowController, NSTextViewDelegate, NS
     private var promptSubmit: NSButton?
     private var closeAfterCommandSave: Bool?
 
-    init(document: SkrivDocument, settings: EditorSettings?) {
+    init(document: SkrivDocument, settings: EditorSettings?,
+         savedFrameName: NSWindow.FrameAutosaveName = "SkrivDocument") {
+        self.savedFrameName = savedFrameName
         LaunchMetrics.shared.markPhase("beforeWindow")
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1000, height: 700)
@@ -31,6 +35,7 @@ final class DocumentWindowController: NSWindowController, NSTextViewDelegate, NS
             defer: true
         )
         window.minSize = NSSize(width: 400, height: 300)
+        window.setFrameUsingName(savedFrameName)
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
         window.animationBehavior = .none
@@ -103,6 +108,7 @@ final class DocumentWindowController: NSWindowController, NSTextViewDelegate, NS
         super.init(window: window)
         self.editorBottom = editorBottom
         shouldCascadeWindows = false
+        window.delegate = self
         textView.delegate = self
         window.initialFirstResponder = textView
         textView.onModeChange = { [weak self] mode in self?.modeLabel.stringValue = mode }
@@ -114,6 +120,32 @@ final class DocumentWindowController: NSWindowController, NSTextViewDelegate, NS
         }
         applySettings(settings)
         LaunchMetrics.shared.markPhase("settings")
+    }
+
+    // Explicit saving lets all document windows share one preference; AppKit's
+    // automatic frame saving only accepts a name for one open window at a time.
+    private func saveWindowFrame() {
+        guard let window, window.isVisible, !isInFullScreen,
+              !window.styleMask.contains(.fullScreen) else { return }
+        window.saveFrame(usingName: savedFrameName)
+    }
+
+    func windowDidMove(_ notification: Notification) { saveWindowFrame() }
+    func windowDidResize(_ notification: Notification) { saveWindowFrame() }
+    func windowWillClose(_ notification: Notification) { saveWindowFrame() }
+
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        saveWindowFrame()
+        isInFullScreen = true
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        isInFullScreen = false
+        saveWindowFrame()
+    }
+
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        isInFullScreen = false
     }
 
     private func showPrompt(_ prompt: Prompt) {

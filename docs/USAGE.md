@@ -27,8 +27,11 @@ The source mark is from [Streamline](https://streamlinehq.com).
 
 ## Documents and invocation
 
-- A fresh document opens maximized on the display containing the pointer, focused
-  and ready to type in **INSERT** mode. The mode is shown at the bottom.
+- Documents remember the most recently moved, resized, or closed window's size and
+  position, including across app launches. Without a saved layout, a document opens
+  maximized on the display containing the pointer. Full-screen transitions preserve
+  the regular window layout. Documents open focused and ready to type in **INSERT**
+  mode. The mode is shown at the bottom.
 - Dark appearance and the built-in Etterglød (`etterglod.nvim`) plain-text
   palette are the defaults, independently of macOS appearance.
 - Writing uses a centered column approximately 72 characters wide in the current

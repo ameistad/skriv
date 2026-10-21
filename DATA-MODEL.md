@@ -1,5 +1,13 @@
 # Data model
 
+## Concept: Remembered document window frame
+- Meaning: the shared size and position used when opening a document window, across closes and app launches.
+- Decision: AppKit's `NSWindow Frame SkrivDocument` application UserDefaults entry owns this UI state. It is separate from user-authored editor settings in `config.skriv`; no document paths or contents are stored.
+- Source of truth: the frame most recently saved by a visible document window on move, resize, or close. New windows restore it using AppKit's frame APIs; absent saved state retains the maximized-on-pointer-display default. Full-screen transitions do not replace the regular frame.
+- Owner: `DocumentWindowController`, using `NSWindow.saveFrame(usingName:)` and `setFrameUsingName(_:)`. All document windows share the same key rather than competing for an exclusive AppKit autosave name.
+- Enforced by: `SettingsPresentationTests` (first-window fallback, close/reopen, multiple windows, and full-screen frame preservation).
+- Decided: 2026-10-21, remember window size after closing.
+
 ## Concept: Document
 - Meaning: the current plain text and save destination of one text document.
 - Owner: `SkrivDocument`, with its `NSTextStorage` as the live text owner.
@@ -30,6 +38,6 @@
 - Removed field: `global-shortcut` is an unknown-setting error, including `none` and empty values. Users remove or comment out old entries; no compatibility value or migration is retained.
 - Lifecycle: load at startup and explicit reload only. Open Configuration creates a commented template only when absent, never rewrites existing content, and opens the file as a plain-text document using the `no.skriv.configuration` document type so native Save preserves the `.skriv` extension. New documents reuse current settings. No background polling or subprocesses.
 - Failure semantics: validate the whole file before publishing settings to existing/future documents. Failed reloads preserve the previous configuration. Invalid startup configuration reports an error and leaves defaults active. Missing files use defaults. Reload never changes document text or edited status.
-- Legacy data: the old Neovim snapshot and UserDefaults `globalShortcut.v1` value are neither read nor written, migrated, or deleted. The user explicitly chose to remove imported configuration; all new preferences belong to `config.skriv`.
+- Legacy data: the old Neovim snapshot and UserDefaults `globalShortcut.v1` value are neither read nor written, migrated, or deleted. The user explicitly chose to remove imported configuration; all new editor preferences belong to `config.skriv`. App-managed window geometry is separate UI state, documented above.
 - Enforced by: `ConfigurationTests`, `ConfigurationControllerTests`, `SettingsPresentationTests`, and `NativeEditorTests`. Configuration regression tests reject the removed key and preserve previously applied settings.
 - Decided: 2026-10-20, standalone Ghostty-style configuration; shortcut ownership removed 2026-10-21.

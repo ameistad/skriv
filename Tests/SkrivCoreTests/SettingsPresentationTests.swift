@@ -8,7 +8,9 @@ struct SettingsPresentationTests {
     init() { _ = TestApplication.documents }
 
     @Test func newWindowUsesVisibleScreenFrameAndFocusesEditor() throws {
-        let (document, controller) = try editor()
+        let name = "SkrivTest-\(UUID().uuidString)"
+        defer { NSWindow.removeFrame(usingName: name) }
+        let (document, controller) = try editor(savedFrameName: name)
         defer { document.close() }
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         let window = try #require(controller.window)
@@ -17,11 +19,69 @@ struct SettingsPresentationTests {
         #expect(window.contentView?.subviews.contains(where: { $0 is NSScrollView }) == true)
     }
 
-    private func editor() throws -> (SkrivDocument, DocumentWindowController) {
+    @Test func windowFrameSurvivesClosingAndReopening() throws {
+        let name = "SkrivTest-\(UUID().uuidString)"
+        defer { NSWindow.removeFrame(usingName: name) }
+        let (document, controller) = try editor(savedFrameName: name)
+        defer { document.close() }
+        let window = try #require(controller.window)
+        window.orderFront(nil)
+        window.setFrame(NSRect(x: 100, y: 150, width: 640, height: 480), display: false)
+        let expected = window.frame
+        document.close()
+
+        let (reopened, restored) = try editor(savedFrameName: name)
+        defer { reopened.close() }
+        #expect(restored.window?.frame == expected)
+    }
+
+    @Test func multipleOpenWindowsCanUpdateTheRememberedFrame() throws {
+        let name = "SkrivTest-\(UUID().uuidString)"
+        defer { NSWindow.removeFrame(usingName: name) }
+        let (first, firstController) = try editor(savedFrameName: name)
+        defer { first.close() }
+        let (second, secondController) = try editor(savedFrameName: name)
+        defer { second.close() }
+        let firstWindow = try #require(firstController.window)
+        let secondWindow = try #require(secondController.window)
+        firstWindow.orderFront(nil)
+        secondWindow.orderFront(nil)
+        firstWindow.setFrame(NSRect(x: 100, y: 150, width: 640, height: 480), display: false)
+        secondWindow.setFrame(NSRect(x: 200, y: 200, width: 700, height: 500), display: false)
+
+        let (third, thirdController) = try editor(savedFrameName: name)
+        defer { third.close() }
+        #expect(thirdController.window?.frame == secondWindow.frame)
+
+        firstWindow.setFrameOrigin(NSPoint(x: 120, y: 180))
+        let (fourth, fourthController) = try editor(savedFrameName: name)
+        defer { fourth.close() }
+        #expect(fourthController.window?.frame == firstWindow.frame)
+    }
+
+    @Test func fullScreenChangesPreserveTheRegularWindowFrame() throws {
+        let name = "SkrivTest-\(UUID().uuidString)"
+        defer { NSWindow.removeFrame(usingName: name) }
+        let (document, controller) = try editor(savedFrameName: name)
+        defer { document.close() }
+        let window = try #require(controller.window)
+        window.orderFront(nil)
+        window.setFrame(NSRect(x: 100, y: 150, width: 640, height: 480), display: false)
+        let regularFrame = window.frame
+        controller.windowWillEnterFullScreen(Notification(name: NSWindow.willEnterFullScreenNotification, object: window))
+        window.setFrame(NSRect(x: 0, y: 0, width: 1000, height: 700), display: false)
+        document.close()
+
+        let (reopened, restored) = try editor(savedFrameName: name)
+        defer { reopened.close() }
+        #expect(restored.window?.frame == regularFrame)
+    }
+
+    private func editor(savedFrameName: NSWindow.FrameAutosaveName = "SkrivDocument") throws -> (SkrivDocument, DocumentWindowController) {
         _ = NSApplication.shared
         let document = SkrivDocument()
-        document.makeWindowControllers()
-        let controller = try #require(document.windowControllers.first as? DocumentWindowController)
+        let controller = DocumentWindowController(document: document, settings: nil, savedFrameName: savedFrameName)
+        document.addWindowController(controller)
         return (document, controller)
     }
 
