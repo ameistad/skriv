@@ -6,11 +6,13 @@ final class LineNumberRuler: NSRulerView {
     var absolute = true { didSet { needsDisplay = true } }
     var numberColor = NSColor.secondaryLabelColor { didSet { needsDisplay = true } }
     var editorBackground = EditorTheme.background { didSet { needsDisplay = true } }
-    private weak var editor: NSTextView?
+    private weak var editor: VimTextView?
     private var lineStarts: [Int] = [0]
     private var thicknessUpdatePending = false
+    private let regularFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+    private let boldFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .bold)
 
-    init(scrollView: NSScrollView, editor: NSTextView) {
+    init(scrollView: NSScrollView, editor: VimTextView) {
         self.editor = editor
         super.init(scrollView: scrollView, orientation: .verticalRuler)
         clientView = editor
@@ -66,20 +68,25 @@ final class LineNumberRuler: NSRulerView {
         max(0, lineStarts.partitionIndex { $0 <= offset } - 1)
     }
 
+    /// Shared by every drawn label, including the empty final line.
+    func label(forLine index: Int) -> NSAttributedString {
+        let currentLine = lineIndex(at: editor?.activeLineOffset ?? 0)
+        let isCurrent = index == currentLine
+        let value = relative ? (isCurrent && absolute ? index + 1 : abs(index - currentLine)) : index + 1
+        return NSAttributedString(string: String(value), attributes: [
+            .font: isCurrent ? boldFont : regularFont,
+            .foregroundColor: numberColor,
+        ])
+    }
+
     override func drawHashMarksAndLabels(in rect: NSRect) {
         editorBackground.setFill()
         bounds.intersection(rect).fill()
         guard let editor, let layout = editor.layoutManager, let container = editor.textContainer else { return }
-        let currentLine = lineIndex(at: editor.selectedRange().location)
         let visible = editor.visibleRect.offsetBy(dx: -editor.textContainerOrigin.x, dy: -editor.textContainerOrigin.y)
         let glyphs = layout.glyphRange(forBoundingRect: visible, in: container)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular),
-            .foregroundColor: numberColor,
-        ]
         func drawNumber(_ index: Int, y: CGFloat) {
-            let value = relative ? (index == currentLine && absolute ? index + 1 : abs(index - currentLine)) : index + 1
-            let label = NSAttributedString(string: String(value), attributes: attributes)
+            let label = self.label(forLine: index)
             let origin = convert(NSPoint(x: 0, y: y + editor.textContainerOrigin.y), from: editor)
             label.draw(at: NSPoint(x: ruleThickness - label.size().width - 10, y: origin.y + 2))
         }

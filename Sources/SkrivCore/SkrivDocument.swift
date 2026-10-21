@@ -1,10 +1,10 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// The text storage owns the note. Views and file serialization share that storage.
+/// The text storage owns the document. Views and file serialization share that storage.
 @MainActor
 @objc(SkrivDocument)
-public final class ScratchDocument: NSDocument {
+public final class SkrivDocument: NSDocument {
     static let typeName = UTType.plainText.identifier
     nonisolated static let configurationTypeName = "no.skriv.configuration"
     let textStorage = NSTextStorage()
@@ -26,8 +26,8 @@ public final class ScratchDocument: NSDocument {
     }
 
     public override func makeWindowControllers() {
-        let settings = (NSDocumentController.shared as? ScratchDocumentController)?.currentSettings
-        addWindowController(NoteWindowController(document: self, settings: settings))
+        let settings = (NSDocumentController.shared as? SkrivDocumentController)?.currentSettings
+        addWindowController(DocumentWindowController(document: self, settings: settings))
     }
 
     public override func canClose(withDelegate delegate: Any, shouldClose shouldCloseSelector: Selector?,

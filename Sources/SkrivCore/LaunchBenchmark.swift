@@ -1,39 +1,36 @@
 import AppKit
 
 /// Benchmark-only driver used by scripts/benchmark.py via `--benchmark-launch-count`.
-/// It invokes the same note-opening action on the main loop. It never sends synthetic
+/// It invokes the same document-opening action on the main loop. It never sends synthetic
 /// input and never closes a modified or saved document. Inert without the flag.
 @MainActor
 public enum LaunchBenchmark {
-    public static var isRequested: Bool {
-        ProcessInfo.processInfo.arguments.contains("--benchmark-launch-count")
-    }
-
-    public static func startIfRequested(createNote: @escaping @MainActor () -> Void) {
+    public static func startIfRequested(createDocument: @escaping @MainActor () -> Void) {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--benchmark-launch-count"),
               arguments.indices.contains(index + 1),
               let count = Int(arguments[index + 1]), (1...1000).contains(count) else { return }
 
-        let startupNotes = NSDocumentController.shared.documents.filter {
+        let startupDocuments = NSDocumentController.shared.documents.filter {
             $0.fileURL == nil && !$0.isDocumentEdited
         }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(150))
+            // Keep emitted stage names stable for comparisons with historical reports.
             LaunchMetrics.shared.recordMemory(stage: "oneEmptyNote")
-            for document in startupNotes where document.fileURL == nil && !document.isDocumentEdited {
+            for document in startupDocuments where document.fileURL == nil && !document.isDocumentEdited {
                 document.close()
             }
             try? await Task.sleep(for: .milliseconds(500))
             LaunchMetrics.shared.recordMemory(stage: "residentNoWindows")
             for iteration in 0..<count {
                 let before = Set(NSDocumentController.shared.documents.map(ObjectIdentifier.init))
-                createNote()
+                createDocument()
                 let owned = NSDocumentController.shared.documents.filter { !before.contains(ObjectIdentifier($0)) }
                 if iteration == count - 1,
-                   let sample = owned.first as? ScratchDocument,
+                   let sample = owned.first as? SkrivDocument,
                    sample.textStorage.length == 0, !sample.isDocumentEdited {
-                    // This is a newly created benchmark-owned note; preserve any intervening user edits.
+                    // This is a newly created benchmark-owned document; preserve any intervening user edits.
                     let text = String(repeating: "En norsk notatlinje: blåbær, øl, ål, ærlig arbeid og 👩🏽‍💻.\n", count: 1000)
                     sample.textStorage.mutableString.setString(text)
                     for controller in sample.windowControllers {

@@ -5,16 +5,18 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct NativeEditorTests {
-    private func editor() throws -> (ScratchDocument, NoteWindowController) {
+    init() { _ = TestApplication.documents }
+
+    private func editor() throws -> (SkrivDocument, DocumentWindowController) {
         _ = NSApplication.shared
-        let document = ScratchDocument()
+        let document = SkrivDocument()
         document.makeWindowControllers()
-        let controller = try #require(document.windowControllers.first as? NoteWindowController)
+        let controller = try #require(document.windowControllers.first as? DocumentWindowController)
         document.undoManager?.groupsByEvent = false
         return (document, controller)
     }
 
-    private func edit(_ document: ScratchDocument, _ operation: () -> Void) {
+    private func edit(_ document: SkrivDocument, _ operation: () -> Void) {
         document.undoManager?.beginUndoGrouping()
         operation()
         document.undoManager?.endUndoGrouping()
@@ -120,7 +122,7 @@ struct NativeEditorTests {
         }
     }
 
-    @Test func clipboardPreservesLinewiseYanksAcrossNotesAndClearsStaleText() throws {
+    @Test func clipboardPreservesLinewiseYanksAcrossDocumentsAndClearsStaleText() throws {
         try preservingClipboard {
             let (first, firstController) = try editor()
             let (second, secondController) = try editor()

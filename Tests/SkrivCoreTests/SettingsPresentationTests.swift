@@ -5,6 +5,8 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct SettingsPresentationTests {
+    init() { _ = TestApplication.documents }
+
     @Test func newWindowUsesVisibleScreenFrameAndFocusesEditor() throws {
         let (document, controller) = try editor()
         defer { document.close() }
@@ -15,11 +17,11 @@ struct SettingsPresentationTests {
         #expect(window.contentView?.subviews.contains(where: { $0 is NSScrollView }) == true)
     }
 
-    private func editor() throws -> (ScratchDocument, NoteWindowController) {
+    private func editor() throws -> (SkrivDocument, DocumentWindowController) {
         _ = NSApplication.shared
-        let document = ScratchDocument()
+        let document = SkrivDocument()
         document.makeWindowControllers()
-        let controller = try #require(document.windowControllers.first as? NoteWindowController)
+        let controller = try #require(document.windowControllers.first as? DocumentWindowController)
         return (document, controller)
     }
 
@@ -69,7 +71,7 @@ struct SettingsPresentationTests {
         #expect(view.frame.width == scroll.contentSize.width)
     }
 
-    @Test func emptyNoteHasLayoutForItsFirstNumberedLine() throws {
+    @Test func emptyDocumentHasLayoutForItsFirstNumberedLine() throws {
         let (document, controller) = try editor()
         defer { document.close() }
         var settings = EditorSettings()
@@ -159,7 +161,7 @@ struct SettingsPresentationTests {
         let url = directory.appendingPathComponent("config.skriv")
         let configuration = ConfigurationController(url: url)
         try configuration.createIfMissing()
-        let documents = ScratchDocumentController()
+        let documents = TestApplication.documents
         defer {
             for document in documents.documents {
                 document.close()
@@ -167,10 +169,10 @@ struct SettingsPresentationTests {
             }
         }
         try documents.openConfiguration(at: url)
-        let document = try #require(documents.documents.first as? ScratchDocument)
+        let document = try #require(documents.documents.first as? SkrivDocument)
         #expect(document.fileURL == url)
-        #expect(document.fileType == ScratchDocument.configurationTypeName)
-        #expect(document.fileNameExtension(forType: ScratchDocument.configurationTypeName,
+        #expect(document.fileType == SkrivDocument.configurationTypeName)
+        #expect(document.fileNameExtension(forType: SkrivDocument.configurationTypeName,
                                            saveOperation: .saveOperation) == "skriv")
         #expect(document.textStorage.string == SkrivConfiguration.template)
         document.textStorage.mutableString.setString("font-size = 22\n")
@@ -178,16 +180,18 @@ struct SettingsPresentationTests {
         #expect(documents.documents.count == 1)
         #expect(document.textStorage.string == "font-size = 22\n")
         document.updateChangeCount(.changeDone)
-        try await document.save(to: url, ofType: ScratchDocument.configurationTypeName, for: .saveOperation)
+        try await document.save(to: url, ofType: SkrivDocument.configurationTypeName, for: .saveOperation)
         #expect(document.fileURL == url)
         #expect(!document.isDocumentEdited)
-        try configuration.reload { _ in }
+        try configuration.reload()
         #expect(configuration.current.editor.fontSize == 22)
         #expect(!FileManager.default.fileExists(atPath: url.deletingPathExtension().appendingPathExtension("txt").path))
     }
 
-    @Test func parsedConfigurationUpdatesEveryOpenNoteWithoutEditing() throws {
-        let documents = ScratchDocumentController()
+    @Test func parsedConfigurationUpdatesEveryOpenDocumentWithoutEditing() throws {
+        let documents = TestApplication.documents
+        let previousSettings = documents.currentSettings
+        defer { documents.currentSettings = previousSettings }
         let (first, firstController) = try editor()
         let (second, secondController) = try editor()
         documents.addDocument(first)
@@ -212,7 +216,7 @@ struct SettingsPresentationTests {
         keybind = H=h
         """)
         documents.applySettings(parsed.editor)
-        #expect(documents.currentSettings == parsed.editor, "Future notes use the same resolved settings.")
+        #expect(documents.currentSettings == parsed.editor, "Future documents use the same resolved settings.")
         for controller in [firstController, secondController] {
             #expect(controller.textView.font?.pointSize == 22)
             #expect(controller.textView.backgroundColor == EditorTheme.color(0x123456))

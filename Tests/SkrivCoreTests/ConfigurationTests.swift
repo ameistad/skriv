@@ -1,5 +1,4 @@
 import Foundation
-import Carbon
 import Testing
 @testable import SkrivCore
 
@@ -23,7 +22,6 @@ struct ConfigurationTests {
         selection-foreground = 040506
         line-number-foreground = 070809
         line-number-background = 0a0b0c
-        global-shortcut = ctrl+shift+space
         keybind = H=h
         keybind = L=l
         keybind = H=0
@@ -40,7 +38,6 @@ struct ConfigurationTests {
         #expect(settings.editor.selectionBackground == 0x010203 && settings.editor.selectionForeground == 0x040506)
         #expect(settings.editor.lineNumberForeground == 0x070809 && settings.editor.lineNumberBackground == 0x0A0B0C)
         #expect(settings.editor.normalKeyMappings == ["H": "0", "L": "l"])
-        #expect(settings.shortcut == ShortcutConfiguration(keyCode: 49, modifiers: UInt32(controlKey | shiftKey)))
     }
 
     @Test func emptyValuesResetDefaultsAndLastScalarWins() throws {
@@ -65,8 +62,6 @@ struct ConfigurationTests {
         tab-width =
         indent-width = 2
         indent-width =
-        global-shortcut = none
-        global-shortcut =
         keybind = H=h
         keybind = L=l
         keybind =
@@ -74,7 +69,6 @@ struct ConfigurationTests {
         #expect(settings == SkrivConfiguration())
         let repeated = try SkrivConfiguration.parse("font-size = 12\nfont-size = 24")
         #expect(repeated.editor.fontSize == 24)
-        #expect(try SkrivConfiguration.parse("global-shortcut = none").shortcut.enabled == false)
         #expect(try SkrivConfiguration.parse("line-numbers = relative").editor.number == false)
         #expect(try SkrivConfiguration.parse("line-numbers = absolute").editor.relativeNumber == false)
     }
@@ -86,8 +80,7 @@ struct ConfigurationTests {
             "tab-width = 0", "indent-width = -1", "writing-width = 0", "line-numbers = true",
             "background = #fff", "background = 12345g", "background = -12345",
             "unknown = value", "= value", "keybind = 2=h", "keybind = jk=i", "keybind = H=gg",
-            "keybind = H=:quit", "keybind = H", "global-shortcut = alt+n",
-            "global-shortcut = cmd+cmd+n", "global-shortcut = cmd++n", "global-shortcut = cmd+F99",
+            "keybind = H=:quit", "keybind = H",
         ]
         for entry in invalid {
             #expect(throws: ConfigurationError.self) { try SkrivConfiguration.parse(entry) }
@@ -111,14 +104,15 @@ struct ConfigurationTests {
         _ = try SkrivConfiguration.parse(examples)
     }
 
-    @Test func validatesShortcutPhysicalKeysAndModifierBits() throws {
-        #expect(ShortcutConfiguration.default.isValid)
-        #expect(ShortcutConfiguration.default.displayName == "⌃⌥⌘N")
-        #expect(try ShortcutConfiguration.parse("ctrl+alt+cmd+N") == .default)
-        #expect(!ShortcutConfiguration(keyCode: 45, modifiers: UInt32(optionKey)).isValid)
-        #expect(!ShortcutConfiguration(keyCode: 45, modifiers: UInt32(cmdKey) | 0x80000000).isValid)
-        #expect(!ShortcutConfiguration(keyCode: 255, modifiers: UInt32(cmdKey)).isValid)
+    @Test func removedGlobalShortcutIsAnUnknownSetting() throws {
+        for value in ["ctrl+alt+cmd+n", "none", ""] {
+            #expect(throws: ConfigurationError("Line 2: Unknown setting “global-shortcut”.")) {
+                try SkrivConfiguration.parse("font-size = 20\nglobal-shortcut = \(value)")
+            }
+        }
+        #expect(try SkrivConfiguration.parse("# global-shortcut = ctrl+alt+cmd+n\nfont-size = 20").editor.fontSize == 20)
     }
+
 }
 
 @Suite(.serialized)
@@ -133,33 +127,28 @@ struct ConfigurationControllerTests {
         let url = temporaryURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let controller = ConfigurationController(url: url)
-        var appliedShortcut: ShortcutConfiguration?
-        try controller.reload { appliedShortcut = $0 }
+        try controller.reload()
         #expect(controller.current == SkrivConfiguration())
         #expect(!FileManager.default.fileExists(atPath: url.path))
         try controller.createIfMissing()
-        try "font-size = 20\nglobal-shortcut = none\n".write(to: url, atomically: true, encoding: .utf8)
-        try controller.reload { appliedShortcut = $0 }
+        try "font-size = 20\n".write(to: url, atomically: true, encoding: .utf8)
+        try controller.reload()
         let valid = controller.current
         #expect(valid.editor.fontSize == 20)
-        #expect(appliedShortcut?.enabled == false)
-        try "font-size = 28\nglobal-shortcut = ctrl+cmd+m\n".write(to: url, atomically: true, encoding: .utf8)
-        #expect(controller.current == valid, "Editing the file alone doesn't reload open notes.")
-        #expect(throws: ShortcutError.registrationFailed(-1)) {
-            try controller.reload { _ in throw ShortcutError.registrationFailed(-1) }
+        for entry in ["global-shortcut = ctrl+cmd+m", "global-shortcut = none", "global-shortcut =", "unknown = nope"] {
+            try "font-size = 28\n\(entry)".write(to: url, atomically: true, encoding: .utf8)
+            #expect(controller.current == valid, "Editing the file alone doesn't reload open documents.")
+            #expect(throws: ConfigurationError.self) { try controller.reload() }
+            #expect(controller.current == valid, "Invalid settings must not partially apply editor preferences.")
         }
-        #expect(controller.current == valid, "A shortcut conflict must not partially apply editor preferences.")
-        try "font-size = 30\nunknown = nope".write(to: url, atomically: true, encoding: .utf8)
-        #expect(throws: ConfigurationError.self) {
-            try controller.reload { _ in Issue.record("Invalid settings must never reach registration.") }
-        }
-        #expect(controller.current == valid)
         try "font-size = 24".write(to: url, atomically: true, encoding: .utf8)
-        try controller.reload { appliedShortcut = $0 }
+        try controller.reload()
         #expect(controller.current.editor.fontSize == 24)
-        #expect(appliedShortcut == .default, "Removing an override restores its default.")
+        try "".write(to: url, atomically: true, encoding: .utf8)
+        try controller.reload()
+        #expect(controller.current == SkrivConfiguration(), "Removing overrides restores defaults.")
         try FileManager.default.removeItem(at: url)
-        try controller.reload { appliedShortcut = $0 }
+        try controller.reload()
         #expect(controller.current == SkrivConfiguration())
     }
 
@@ -172,7 +161,7 @@ struct ConfigurationControllerTests {
         let custom = "# My spacing and comments\nfont-size=21\n"
         try custom.write(to: url, atomically: true, encoding: .utf8)
         try controller.createIfMissing()
-        try controller.reload { _ in }
+        try controller.reload()
         #expect(try String(contentsOf: url, encoding: .utf8) == custom)
         #expect(controller.current.editor.fontSize == 21)
     }
@@ -184,11 +173,11 @@ struct ConfigurationControllerTests {
         try controller.createIfMissing()
         for data in [Data([0xFF]), Data(repeating: 32, count: SkrivConfiguration.maximumBytes + 1)] {
             try data.write(to: url)
-            #expect(throws: ConfigurationError.self) { try controller.reload { _ in } }
+            #expect(throws: ConfigurationError.self) { try controller.reload() }
             #expect(controller.current == SkrivConfiguration())
         }
         try FileManager.default.removeItem(at: url)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        #expect(throws: (any Error).self) { try controller.reload { _ in } }
+        #expect(throws: (any Error).self) { try controller.reload() }
     }
 }

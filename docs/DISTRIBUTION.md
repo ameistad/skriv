@@ -30,7 +30,7 @@ See Apple's [distribution signing guide](https://developer.apple.com/documentati
 and [notarization workflow](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 
 Before a public release, verify native save/open dialogs, failed saves,
-unsaved-change cancel/discard/quit, global shortcut collision and disable,
+unsaved-change cancel/discard/quit, Dock/launcher reopening, active line-number emphasis,
 accessibility, marked-text input, display/Space behavior, and startup/memory
 baselines on the supported macOS versions. Verify opening, saving, and reloading
-`~/.config/skriv/config.skriv`, including invalid settings and shortcut conflicts.
+`~/.config/skriv/config.skriv`, including invalid settings and rejection of the removed `global-shortcut` key.

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Per-note transient search history. Matches must start and end on whole graphemes.
+/// Per-document transient search history. Matches must start and end on whole graphemes.
 struct LiteralSearch {
     struct Match: Equatable {
         let range: NSRange

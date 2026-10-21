@@ -62,6 +62,8 @@ struct VimEngine {
     private var desiredColumn: Int?
     private var visualAnchor = 0
     private var visualCaret = 0
+    /// The active end can differ from the lower bound of the native selection.
+    var activeVisualCaret: Int? { mode.isVisual ? visualCaret : nil }
     // One disposable index per editor, shared by Normal and Visual motions.
     // The native text remains authoritative; byte equality protects UTF-16
     // offsets even when two strings are canonically equivalent.

@@ -1,7 +1,7 @@
 import AppKit
 
 @MainActor
-final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSTextFieldDelegate {
+final class DocumentWindowController: NSWindowController, NSTextViewDelegate, NSTextFieldDelegate {
     let textView: VimTextView
     private let scrollView: NSScrollView
     private let modeLabel = NSTextField(labelWithString: "INSERT")
@@ -14,7 +14,7 @@ final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSText
     private var searchForward = true
     private var searchCount = 1
 
-    init(document: ScratchDocument, settings: EditorSettings?) {
+    init(document: SkrivDocument, settings: EditorSettings?) {
         LaunchMetrics.shared.markPhase("beforeWindow")
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1000, height: 700)
@@ -71,7 +71,7 @@ final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSText
         textView.minSize = NSSize(width: 0, height: scrollView.contentSize.height)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [.width]
-        textView.setAccessibilityLabel("Note")
+        textView.setAccessibilityLabel("Document")
         LaunchMetrics.shared.markPhase("editorConfiguration")
 
         scrollView.documentView = textView
@@ -251,14 +251,14 @@ final class NoteWindowController: NSWindowController, NSTextViewDelegate, NSText
         (document as? NSDocument)?.undoManager
     }
 
-    @objc func discardNote(_ sender: Any?) {
+    @objc func discardChanges(_ sender: Any?) {
         guard let document = document as? NSDocument, let window else { return }
         guard document.isDocumentEdited else {
             document.close()
             return
         }
         let alert = NSAlert()
-        alert.messageText = "Discard changes to this note?"
+        alert.messageText = "Discard changes to this document?"
         alert.informativeText = "Unsaved text will be lost. Any previously saved file will remain."
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Discard")

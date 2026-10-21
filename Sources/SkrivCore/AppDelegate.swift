@@ -3,18 +3,15 @@ import AppKit
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     // Construct this before anyone requests NSDocumentController.shared.
-    private let documents = ScratchDocumentController()
+    private let documents = SkrivDocumentController()
     private let configuration = ConfigurationController()
     private var startupConfigurationError: Error?
-    private lazy var globalShortcut = GlobalShortcut { [weak self] in self?.newQuickNote() }
 
     public func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
         do { try loadConfiguration() }
         catch {
             startupConfigurationError = error
-            // First launch has no previous configuration; keep the bundled defaults usable.
-            if !LaunchBenchmark.isRequested { try? globalShortcut.apply(.default) }
         }
     }
 
@@ -28,7 +25,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         if let error = startupConfigurationError {
             showConfigurationError(error, keepingDefaults: true)
         }
-        LaunchBenchmark.startIfRequested { [weak self] in self?.newQuickNote() }
+        LaunchBenchmark.startIfRequested { [weak self] in self?.newDocument() }
     }
 
     public func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
@@ -41,25 +38,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if !hasVisibleWindows {
-            newQuickNote()
+            newDocument()
         }
         return true
     }
 
-    public func applicationWillTerminate(_ notification: Notification) {
-        globalShortcut.stop()
-    }
-
-    @objc private func newQuickNote() {
+    private func newDocument() {
         LaunchMetrics.shared.begin(.warmInvocation)
         NSApp.activate(ignoringOtherApps: true)
         documents.newDocument(nil)
     }
 
     private func loadConfiguration() throws {
-        try configuration.reload { [self] candidate in
-            if !LaunchBenchmark.isRequested { try globalShortcut.apply(candidate) }
-        }
+        try configuration.reload()
         documents.applySettings(configuration.current.editor)
     }
 
@@ -109,15 +100,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "Quit Skriv", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         let file = submenu("File", in: menu)
-        file.addItem(withTitle: "New Note", action: #selector(NSDocumentController.newDocument(_:)), keyEquivalent: "n")
+        file.addItem(withTitle: "New", action: #selector(NSDocumentController.newDocument(_:)), keyEquivalent: "n")
         file.addItem(withTitle: "Open…", action: #selector(NSDocumentController.openDocument(_:)), keyEquivalent: "o")
         file.addItem(.separator())
         file.addItem(withTitle: "Save…", action: #selector(NSDocument.save(_:)), keyEquivalent: "s")
         let saveAs = file.addItem(withTitle: "Save As…", action: #selector(NSDocument.saveAs(_:)), keyEquivalent: "s")
         saveAs.keyEquivalentModifierMask = [.command, .shift]
         file.addItem(.separator())
-        file.addItem(withTitle: "Close Note", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        file.addItem(withTitle: "Discard Note…", action: #selector(NoteWindowController.discardNote(_:)), keyEquivalent: "")
+        file.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        file.addItem(withTitle: "Discard Changes…", action: #selector(DocumentWindowController.discardChanges(_:)), keyEquivalent: "")
 
         let edit = submenu("Edit", in: menu)
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -162,15 +153,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
-final class ScratchDocumentController: NSDocumentController {
-    /// Applied to every new note; nil means the built-in editor settings.
+final class SkrivDocumentController: NSDocumentController {
+    /// Applied to every new document; nil means the built-in editor settings.
     var currentSettings: EditorSettings?
 
     func applySettings(_ settings: EditorSettings) {
         currentSettings = settings
         for document in documents {
             for controller in document.windowControllers {
-                (controller as? NoteWindowController)?.applySettings(settings)
+                (controller as? DocumentWindowController)?.applySettings(settings)
             }
         }
     }
@@ -181,15 +172,15 @@ final class ScratchDocumentController: NSDocumentController {
             existing.showWindows()
             return
         }
-        let document = try ScratchDocument(contentsOf: url, ofType: ScratchDocument.configurationTypeName)
+        let document = try SkrivDocument(contentsOf: url, ofType: SkrivDocument.configurationTypeName)
         addDocument(document)
         document.makeWindowControllers()
         document.showWindows()
     }
 
-    override var defaultType: String? { ScratchDocument.typeName }
+    override var defaultType: String? { SkrivDocument.typeName }
 
     override func documentClass(forType typeName: String) -> AnyClass? {
-        ScratchDocument.self
+        SkrivDocument.self
     }
 }

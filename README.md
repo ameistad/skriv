@@ -2,10 +2,10 @@
 
 # Skriv
 
-A fast, lightweight macOS scratchpad with native text editing and a focused Vim subset.
+A fast, lightweight macOS text editor with native editing and a focused Vim subset.
 Built with Swift and AppKit, with no external dependencies.
 
-- Opens focused, maximized notes with a configurable global shortcut.
+- Opens focused, maximized documents, ready for writing.
 - Centers writing in a responsive 72-character column, with word wrapping by default.
 - Dark by default, with Etterglød colors and a simple `~/.config/skriv/config.skriv` configuration file.
 - Vim motions, Visual selection, literal search, and native Find/Replace.
@@ -20,12 +20,13 @@ Requires macOS 14+ and Swift 6. Building the app icon requires Xcode or Command 
 open build/Skriv.app
 ```
 
-The local build is ad-hoc signed. Save open notes and quit an older build before relaunching.
+The local build is ad-hoc signed. Save open documents and quit an older build before relaunching.
 
 ## Basics
 
-`⌘N` creates a note, `⌘S` saves, and `⌘F` finds text.
-`Esc` enters Normal mode; `i` resumes typing. The default global shortcut is `⌃⌥⌘N`.
+`⌘N` creates a document, `⌘S` saves, and `⌘F` finds text.
+`Esc` enters Normal mode; `i` resumes typing. When line numbers are enabled, the active line number is bold.
+Use an external launcher such as Alfred or Raycast to assign a global shortcut to Skriv.
 
 Use `⌘,` to open the configuration and `⇧⌘,` to reload it after saving.
 The file uses `key = value` lines; see the [configuration reference](docs/USAGE.md#configuration).

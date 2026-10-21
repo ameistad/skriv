@@ -93,7 +93,7 @@ def main():
             "Build release immediately before benchmarking; configuration is not inferred.",
             "coldProcess begins immediately before Python subprocess.run, including harness setup, process creation, and dyld; excludes Launch Services.",
             "coldStartup begins in main. Neither cold measurement forces OS filesystem caches to be cold.",
-            "Warm timing invokes the shared note action, excluding hardware key delivery.",
+            "Warm timing invokes the shared document action, excluding hardware key delivery.",
             "Input readiness means the editor was assigned first responder, not event delivery latency.",
             "Display submission is AppKit draw completion, not compositor or screen presentation.",
             "Resident bytes are point-in-time RSS, not memory pressure or physical footprint.",

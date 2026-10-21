@@ -2,7 +2,6 @@ import Foundation
 
 struct SkrivConfiguration: Equatable, Sendable {
     var editor = EditorSettings()
-    var shortcut = ShortcutConfiguration.default
 
     static let maximumBytes = 65_536
 
@@ -87,9 +86,6 @@ struct SkrivConfiguration: Equatable, Sendable {
             case "selection-foreground": result.editor.selectionForeground = try color()
             case "line-number-foreground": result.editor.lineNumberForeground = try color()
             case "line-number-background": result.editor.lineNumberBackground = try color()
-            case "global-shortcut":
-                do { result.shortcut = try ShortcutConfiguration.parse(value) }
-                catch { throw invalid("global-shortcut must be none or a letter/space with ctrl or cmd (e.g. ctrl+alt+cmd+n).") }
             case "keybind":
                 if value.isEmpty { result.editor.normalKeyMappings.removeAll(); continue }
                 guard let equals = value.firstIndex(of: "=") else {
@@ -141,10 +137,6 @@ struct SkrivConfiguration: Equatable, Sendable {
     # line-number-foreground =
     # line-number-background =
 
-    # Modifiers: ctrl, alt, cmd, shift. Requires ctrl or cmd plus A–Z or space.
-    # Letter names refer to physical US keyboard positions. Use none to disable.
-    # global-shortcut = ctrl+alt+cmd+n
-
     # Nonrecursive single-key Normal-mode mappings; Insert/Visual/operator keys are unchanged.
     # Targets: h j k l w b e W B E 0 $ ^ i a I A o O x X p P u D C Y G d c y v V n N / ?
     # keybind = H=h
@@ -172,11 +164,9 @@ final class ConfigurationController {
         self.url = url
     }
 
-    func reload(applyShortcut: (ShortcutConfiguration) throws -> Void) throws {
-        let candidate = try read()
-        // Registration must succeed before changing presentation or the in-memory configuration.
-        try applyShortcut(candidate.shortcut)
-        current = candidate
+    func reload() throws {
+        // Publish only after the entire file has been read and validated.
+        current = try read()
     }
 
     private func read() throws -> SkrivConfiguration {

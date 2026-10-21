@@ -23,6 +23,9 @@ final class VimTextView: NSTextView {
     private var exportedClipboardChangeCount: Int?
     private static let linewiseClipboardType = NSPasteboard.PasteboardType("no.skriv.linewise")
 
+    /// Native selections use their start; Vim Visual selections retain a moving endpoint.
+    var activeLineOffset: Int { engine.activeVisualCaret ?? selectedRange().location }
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         updateWritingInsets()
@@ -128,6 +131,8 @@ final class VimTextView: NSTextView {
             onModeChange?(engine.mode.label)
         }
         if case .select = effect {} else { scrollRangeToVisible(selectedRange()) }
+        // Visual `o` can move the active endpoint without changing the selected range.
+        enclosingScrollView?.verticalRulerView?.needsDisplay = true
         return true
     }
 

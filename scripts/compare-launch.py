@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Alternate two release builds on the same desktop to compare note opening.
+"""Alternate two release builds on the same desktop to compare document opening.
 
 Each subprocess uses Skriv's isolated benchmark mode. No user documents are
 opened or closed. Reverses run order on every pair to reduce temporal bias.

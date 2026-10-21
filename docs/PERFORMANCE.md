@@ -7,10 +7,9 @@ Build optimized code, then run on a logged-in macOS desktop:
 python3 scripts/benchmark.py --runs 10 --warm 20
 ```
 
-This runs ten fresh processes and twenty warm note invocations per process.
-Each process creates and closes only its own unmodified scratch notes, skips
-global shortcut registration, and exits. Avoid interacting with benchmark
-windows. A separately running Skriv process and its documents are unaffected.
+This runs ten fresh processes and twenty warm document invocations per process.
+Each process creates and closes only its own unmodified documents, then exits.
+Avoid interacting with benchmark windows. A separately running Skriv process and its documents are unaffected.
 The script requires Python 3.10+ and saves raw JSONL and a JSON summary under
 `build/benchmarks/run-*`. Reports contain hardware, OS, bundle and executable
 sizes, median/p95/min/max milliseconds, and resident memory in bytes.
@@ -29,17 +28,17 @@ Timing boundaries:
   assignment and AppKit display submission. It excludes process creation,
   dynamic linking, and OS disk-cache effects; these are fresh-process launches,
   not forced filesystem-cold launches.
-- `warmInvocation`: entry into the shared new-note action to the same points.
+- `warmInvocation`: entry into the shared new-document action to the same points.
   The harness calls that action on the main event loop. It excludes keyboard
-  hardware and hot-key event delivery.
+  hardware and external launcher event delivery.
 - `inputReady`: the editor has been assigned first responder.
 - `displaySubmitted`: `NSWindow.displayIfNeeded()` has returned. This measures
   application drawing, **not** compositor presentation or pixels reaching the
   screen. Actual visible latency still needs Instruments/OS presentation
   tracing or external high-speed video.
-- Memory: `mach_task_basic_info.resident_size` sampled with an empty note open,
-  after all benchmark notes close, with a 1,000-line Norwegian/emoji note open, and after
-  warm runs. Representative-note and final-idle samples allow one second for
+- Memory: `mach_task_basic_info.resident_size` sampled with an empty document open,
+  after all benchmark documents close, with a 1,000-line Norwegian/emoji document open, and after
+  warm runs. Representative-document and final-idle samples allow one second for
   transient drawing surfaces to settle. These RSS samples are not macOS physical
   footprint or memory pressure.
 
@@ -48,21 +47,24 @@ Do not claim a visible-presentation target based on `displaySubmitted`.
 Instrumentation collects timestamps before writing diagnostics, and is disabled
 unless `SKRIV_METRICS_PATH` is set. Normal operation has no measurement timer,
 polling loop, or subprocess. Configuration is read at startup and explicit reload;
-opening additional notes uses the resolved in-memory settings.
+opening additional documents uses the resolved in-memory settings.
 
 The measurements below predate the standalone `config.skriv` format. References
 to imported settings describe those historical measurements; the import feature
-has since been removed.
+has since been removed. Built-in global shortcuts have also been removed;
+references to their delivery below describe the historical benchmark boundaries.
+The JSONL memory stage identifiers `oneEmptyNote` and `representativeNote` remain
+stable so reports can still be compared across versions.
 
-For manual hot-key measurement, launch the executable with a metrics destination,
-switch to another app, and invoke the configured shortcut:
+For manual reopening measurements, launch the executable with a metrics destination,
+close its unmodified document, switch to another app, and reopen Skriv from the Dock
+or your launcher. With no visible windows, reopening invokes the measured action:
 
 ```sh
 SKRIV_METRICS_PATH=/tmp/skriv-launch.jsonl build/Skriv.app/Contents/MacOS/Skriv
 ```
 
-Use a single interactive instance when checking hot-key behavior. Check shortcut
-collisions, disabled shortcuts, multiple displays, menu-bar and Dock placement,
+Use a single interactive instance when checking app reopening. Check multiple displays, menu-bar and Dock placement,
 Spaces, Norwegian layouts, VoiceOver, and marked-text composition separately.
 Automatic in-process timing does not verify those workflows.
 
@@ -100,20 +102,20 @@ fresh-process launches benefit from OS caches and are not a boot-cold test.
 
 | Resident memory | Median | p95 |
 | --- | ---: | ---: |
-| One empty note | 101.57 MiB | 101.73 MiB |
+| One empty document | 101.57 MiB | 101.73 MiB |
 | No windows, before warm opens | 92.91 MiB | 99.86 MiB |
-| 1,000-line, 75,000-byte Norwegian/emoji note | 107.66 MiB | 216.77 MiB |
+| 1,000-line, 75,000-byte Norwegian/emoji document | 107.66 MiB | 216.77 MiB |
 | No windows, after warm opens | 109.01 MiB | 111.06 MiB |
 
-The representative-note measurement had one transient 216.77 MiB outlier;
-that process returned to 104.58 MiB when its note closed. RSS can retain or
+The representative-document measurement had one transient 216.77 MiB outlier;
+that process returned to 104.58 MiB when its document closed. RSS can retain or
 release AppKit drawing allocations asynchronously, so these samples do not
 establish a fixed memory budget.
 
 A separate single-process 200-open soak completed with warm input median
 14.549 ms / p95 18.249 ms, and final idle RSS **109.45 MiB**—comparable with
 the 20-open baseline, with no sustained per-open growth observed. Its transient
-representative-note RSS was 163.77 MiB.
+representative-document RSS was 163.77 MiB.
 [`Soak report`](../build/benchmarks/run-1za6avb4/summary.json).
 
 The ad-hoc signed app bundle is **641,818 bytes** (about 627 KiB).
@@ -122,11 +124,6 @@ Raw measurements and host metadata:
 The local `build` directory is ignored by version control; this section records
 the baseline when raw files are not present in a checkout.
 
-Shortcut tests exercise actual Carbon registration collisions, preserving the
-old registration, disabling/releasing a shortcut, idempotent reapplication, and
-dispatching a hot-key event to the registered callback. Injected UI key presses
-did not establish physical system-wide hot-key delivery; that remains a
-physical-keyboard check.
 
 ## Phase 5 check — 2026-10-20
 
@@ -154,8 +151,8 @@ Disabling native Find initialization did not improve these timings. The runs
 were sequential under variable load, so they do not quantify its exact cost.
 The comparison build is outside the project; the release retains Find.
 
-Median RSS was 101.58 MiB with an empty note, 92.83 MiB before warm opens,
-107.49 MiB with the representative note, and 103.73 MiB after warm opens.
+Median RSS was 101.58 MiB with an empty document, 92.83 MiB before warm opens,
+107.49 MiB with the representative document, and 103.73 MiB after warm opens.
 The release bundle is **669,194 bytes** (about 654 KiB), up 27,376 bytes from
 phase 4. There are still no package dependencies or background services.
 The custom Vim search bar is allocated on first use; search history and Visual
@@ -195,8 +192,8 @@ The first comparison using the interactive app's bundle identity completed its
 measurements but timed out during exit. That incomplete run is excluded.
 An isolated probe and the five isolated pairs completed successfully.
 
-Median optimized RSS was 101.42 MiB for an empty note, 92.69 MiB with no windows
-before warm opens, 103.47 MiB for the representative note and 103.91 MiB after
+Median optimized RSS was 101.42 MiB for an empty document, 92.69 MiB with no windows
+before warm opens, 103.47 MiB for the representative document and 103.91 MiB after
 warm opens. As before, occasional drawing allocations produced higher
 transient samples. This launch workload does not exercise the new editing caches.
 
