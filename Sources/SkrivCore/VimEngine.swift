@@ -4,10 +4,10 @@ extension String {
     /// String equality uses canonical equivalence, which cannot validate cached
     /// UTF-16 positions. Compare exact bytes, using contiguous storage when available.
     func isByteIdentical(to other: String) -> Bool {
-        guard utf8.count == other.utf8.count else { return false }
         return utf8.withContiguousStorageIfAvailable { left in
             other.utf8.withContiguousStorageIfAvailable { right in
-                left.isEmpty || memcmp(left.baseAddress!, right.baseAddress!, left.count) == 0
+                left.count == right.count && (left.isEmpty || left.baseAddress == right.baseAddress ||
+                    memcmp(left.baseAddress!, right.baseAddress!, left.count) == 0)
             } ?? utf8.elementsEqual(other.utf8)
         } ?? utf8.elementsEqual(other.utf8)
     }

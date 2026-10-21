@@ -52,7 +52,7 @@ def main():
         measured_apps[name] = copied
     samples = {"before": [], "after": []}
     metadata = {}
-    cache_fingerprints = set()
+    configuration_fingerprints = set()
     for pair in range(args.pairs):
         order = ("before", "after") if pair % 2 == 0 else ("after", "before")
         for name in order:
@@ -67,11 +67,11 @@ def main():
                 raise RuntimeError(f"Benchmark failed; see {output / f'{pair + 1}-{name}.log'}")
             report_path, = destination.glob("run-*/summary.json")
             metadata[name] = json.loads(report_path.read_text())
-            cache_fingerprints.add(metadata[name]["settingsCacheSHA256"])
+            configuration_fingerprints.add(metadata[name]["configurationSHA256"])
             for raw in report_path.parent.glob("process-*.jsonl"):
                 samples[name].extend(json.loads(line) for line in raw.read_text().splitlines() if line)
         print(f"Pair {pair + 1}/{args.pairs} complete", flush=True)
-    if len(cache_fingerprints) != 1:
+    if len(configuration_fingerprints) != 1:
         raise RuntimeError("Editor settings changed between builds; comparison is invalid.")
     if fingerprints != {name: fingerprint(app) for name, app in apps.items()}:
         raise RuntimeError("A binary changed during measurement; comparison is invalid.")

@@ -15,6 +15,7 @@
 - The active gutter line is derived from the engine's active Visual endpoint, or the native selection start outside Visual mode. Bold emphasis and relative numbering share this position; neither persists another caret or setting. Enforced by `LineNumberRulerTests`.
 - No search history or selection is persisted. AppKit owns the native Find bar's separate search state and replacement undo.
 - `VimEngine` caches one immutable grapheme/line index and `LiteralSearch` caches one query's match ranges. These are disposable derivatives of the native text, never editable buffers. Reuse requires exact UTF-8 byte equality, not Unicode canonical equivalence, because UTF-16 positions can differ. Native edits clear both; entering Insert releases the motion index. A changed query or externally changed text rebuilds its corresponding index lazily.
+- `VimTextView` lazily shares one contiguous UTF-8 snapshot with those indexes, avoiding a Cocoa-to-Swift conversion on every command. Character-edit notifications from the current `NSTextStorage` invalidate the snapshot and both indexes, including edits outside `didChangeText`. Replacing storage switches the notification subscription. Attribute changes retain the snapshot; entering Insert drops the view's snapshot reference. This is transient derived state, with no persisted representation.
 - Enforced by: `EverydayEditingTests` and `NativeEditorTests`.
 - Decided: 2026-10-20, everyday editing.
 

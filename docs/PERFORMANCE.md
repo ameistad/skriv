@@ -13,6 +13,8 @@ Avoid interacting with benchmark windows. A separately running Skriv process and
 The script requires Python 3.10+ and saves raw JSONL and a JSON summary under
 `build/benchmarks/run-*`. Reports contain hardware, OS, bundle and executable
 sizes, median/p95/min/max milliseconds, and resident memory in bytes.
+The harness fingerprints `~/.config/skriv/config.skriv` and rejects changes
+during a run; the comparison script also checks it across builds.
 Always build release immediately beforehand; the script does not infer the
 optimization level from a binary.
 
@@ -248,3 +250,85 @@ Raw reports:
 [alternating launch comparison](../build/benchmarks/comparison-c96u1u8n/summary.json),
 [editing before](../build/benchmarks/editing-before.json),
 [editing after](../build/benchmarks/editing-after.json).
+
+## Native command path — 2026-10-21
+
+Apple M3 Pro, arm64, macOS 26.5; Swift 6 with `-O` and whole-module
+optimization. The expanded benchmark covers 1,000, 10,000 and 100,000
+Norwegian/emoji lines (75 KB, 750 KB and 7.5 MB UTF-8).
+
+The engine-only benchmark missed a cost in the editor adapter: fetching and
+traversing Cocoa-backed text on every command. `VimTextView` now creates one
+contiguous UTF-8 snapshot lazily and shares it with the motion and search
+indexes. Text-storage character-edit notifications discard these derivatives,
+including changes made outside `didChangeText`. Byte comparisons recognize
+shared storage without scanning it; distinct strings still require exact
+encoding equality. Insert-mode pass-through keys do not create a snapshot.
+
+The new `--native` workload uses an offscreen `VimTextView` with the app's
+explicit TextKit 1 stack. Each size measures 100 alternating `h`/`l` commands
+and ten first motions after actual single-character storage replacements.
+Assertions check every resulting caret position. Before/after checksums and
+fixture hashes match. These are sequential runs on an active desktop.
+
+| Native command, lines | Before median / p95 | After median / p95 |
+| --- | ---: | ---: |
+| Cached motion, 1,000 | 3.033 / 3.170 ms | 0.015 / 0.018 ms |
+| Cached motion, 10,000 | 30.731 / 31.975 ms | 0.013 / 0.016 ms |
+| Cached motion, 100,000 | 311.255 / 319.527 ms | 0.013 / 0.016 ms |
+| First motion after edit, 1,000 | 14.849 / 15.293 ms | 3.417 / 3.796 ms |
+| First motion after edit, 10,000 | 144.679 / 175.259 ms | 32.966 / 33.706 ms |
+| First motion after edit, 100,000 | 1,441.092 / 1,486.890 ms | 296.011 / 308.094 ms |
+
+These measurements include command handling and native selection updates,
+but exclude hardware input, window/ruler drawing and compositor presentation.
+Post-edit timing excludes the storage replacement itself and includes the next
+command's snapshot and index rebuild. The snapshot and indexes still require
+memory proportional to document size. Large-file rebuilding remains a target:
+the first command after editing 100,000 lines still takes about 296 ms.
+Initial literal-search indexing also remains linear (about 187 ms at that size
+in the engine-only fixture). No improvement is claimed for initial search.
+
+The engine workload additionally reports repeated index builds, initial and
+cached search, Visual motion, and direct bridged-string motion. The latter
+bypasses the view's snapshot and intentionally exposes the conversion cost.
+Reports retain raw samples, compiler flags, host details, source/fixture hashes
+and six decimal places for milliseconds so short operations do not round to zero.
+
+```sh
+python3 scripts/benchmark-editing.py --output build/benchmarks/engine.json
+python3 scripts/benchmark-editing.py --native --output build/benchmarks/native.json
+python3 scripts/benchmark-editing.py --native --source-root /path/to/source-snapshot \
+  --output build/benchmarks/native-before.json
+```
+
+Validation: all 81 tests pass, including exact Unicode encoding, direct storage
+edits, storage replacement, search, insertion, undo and redo. The differential
+Vim corpus passes all 2,158 cases. The release app builds successfully.
+
+Raw reports: [native before](../build/benchmarks/native-verified-before-20261021.json),
+[native after](../build/benchmarks/native-verified-after-20261021.json),
+[engine before](../build/benchmarks/engine-final-before-20261021.json),
+[engine after](../build/benchmarks/engine-final-after-20261021.json).
+
+### Current release launch and memory
+
+Ten fresh processes and 200 warm opens, using a signed copy with an isolated
+bundle identity and unchanged current configuration. This establishes a current
+baseline; it is not an alternating before/after launch comparison.
+
+| Boundary | Median | p95 |
+| --- | ---: | ---: |
+| Process creation → input readiness | 179.416 ms | 565.404 ms |
+| Swift main → input readiness | 167.452 ms | 189.393 ms |
+| Warm action → input readiness | 11.687 ms | 23.260 ms |
+| Warm action → display submitted | 12.561 ms | 24.991 ms |
+
+Every warm input sample was below 39 ms, within the 100 ms target. The process
+launch p95 is the slowest of only ten samples, including the first launch of the
+newly signed copy; OS caches were not flushed. RSS medians were about 98 MiB
+with an empty document, 153 MiB with the representative document and 109 MiB
+after warm opens. These are transient process samples, not a memory budget or
+a measurement of the large-file command caches.
+
+[Launch report and raw samples](../build/benchmarks/launch-20261021-4dkfs2ph/run-jygbkh2o/summary.json).

@@ -15,14 +15,14 @@ import tempfile
 import time
 
 
-def summarize(values):
+def summarize(values, digits=3):
     ordered = sorted(values)
     return {
         "samples": len(ordered),
-        "median": round(statistics.median(ordered), 3),
-        "p95": round(ordered[max(0, math.ceil(len(ordered) * .95) - 1)], 3),
-        "min": round(ordered[0], 3),
-        "max": round(ordered[-1], 3),
+        "median": round(statistics.median(ordered), digits),
+        "p95": round(ordered[max(0, math.ceil(len(ordered) * .95) - 1)], digits),
+        "min": round(ordered[0], digits),
+        "max": round(ordered[-1], digits),
     }
 
 
@@ -44,8 +44,8 @@ def main():
         parser.error("Build the release bundle first: ./scripts/build-app.sh release")
     args.output.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix="run-", dir=args.output.resolve()))
-    cache_path = Path.home() / "Library/Application Support/Skriv/neovim-settings-v1.json"
-    cache_before = cache_path.read_bytes() if cache_path.is_file() else None
+    configuration_path = Path.home() / ".config/skriv/config.skriv"
+    configuration_before = configuration_path.read_bytes() if configuration_path.is_file() else None
     samples = []
     for run in range(args.runs):
         metrics = output / f"process-{run + 1}.jsonl"
@@ -72,8 +72,8 @@ def main():
         key = "residentBytes" if kind == "memory" else "milliseconds"
         results[f"{kind}.{stage}.{key}"] = summarize(
             [sample[key] for sample in samples if sample["kind"] == kind and sample["stage"] == stage])
-    cache_after = cache_path.read_bytes() if cache_path.is_file() else None
-    if cache_before != cache_after:
+    configuration_after = configuration_path.read_bytes() if configuration_path.is_file() else None
+    if configuration_before != configuration_after:
         raise RuntimeError("Editor settings changed during the benchmark; rerun with a stable configuration.")
     report = {
         "recordedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -81,8 +81,9 @@ def main():
                      "memoryBytes": int(sysctl("hw.memsize")), "architecture": platform.machine()},
         "os": platform.platform(),
         "clock": vars(clock),
-        "settingsCachePresent": cache_before is not None,
-        "settingsCacheSHA256": hashlib.sha256(cache_before).hexdigest() if cache_before else None,
+        "configurationPath": str(configuration_path),
+        "configurationPresent": configuration_before is not None,
+        "configurationSHA256": hashlib.sha256(configuration_before).hexdigest() if configuration_before is not None else None,
         "executable": str(executable),
         "bundleBytes": sum(path.stat().st_size for path in app.rglob("*") if path.is_file()),
         "executableBytes": executable.stat().st_size,

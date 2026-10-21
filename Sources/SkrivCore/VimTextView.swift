@@ -22,7 +22,43 @@ final class VimTextView: NSTextView {
     }
     private var updatingWritingInsets = false
     private var exportedClipboardChangeCount: Int?
+    private weak var commandStorage: NSTextStorage?
+    private var commandSnapshot: String?
     private static let linewiseClipboardType = NSPasteboard.PasteboardType("no.skriv.linewise")
+
+    /// Bridge and transcode AppKit's mutable text once per edit, not once per key.
+    /// The snapshot is shared by the motion/search indexes and never owns edits.
+    private var textForCommands: String {
+        if commandStorage !== textStorage {
+            if let commandStorage {
+                NotificationCenter.default.removeObserver(self, name: NSTextStorage.didProcessEditingNotification,
+                                                           object: commandStorage)
+            }
+            commandStorage = textStorage
+            if let commandStorage {
+                NotificationCenter.default.addObserver(self, selector: #selector(commandStorageChanged),
+                    name: NSTextStorage.didProcessEditingNotification, object: commandStorage)
+            }
+            invalidateCommandText()
+        }
+        if let commandSnapshot { return commandSnapshot }
+        var snapshot = string
+        snapshot.makeContiguousUTF8()
+        commandSnapshot = snapshot
+        return snapshot
+    }
+
+    @objc private func commandStorageChanged(_ notification: Notification) {
+        guard let storage = notification.object as? NSTextStorage,
+              storage.editedMask.contains(.editedCharacters) else { return }
+        invalidateCommandText()
+    }
+
+    private func invalidateCommandText() {
+        commandSnapshot = nil
+        engine.invalidateTextCache()
+        search.invalidateMatches()
+    }
 
     /// Native selections use their start; Vim Visual selections retain a moving endpoint.
     var activeLineOffset: Int { engine.activeVisualCaret ?? selectedRange().location }
@@ -83,6 +119,8 @@ final class VimTextView: NSTextView {
     @discardableResult
     func handleVimKey(_ key: String) -> Bool {
         guard !hasMarkedText() else { return false }
+        // Insert-mode keys belong to AppKit and do not need a command snapshot.
+        guard engine.mode != .insert || key == "<Esc>" else { return false }
         let mapped = engine.canApplyNormalMapping ? normalKeyMappings[key] ?? key : key
         if engine.mode == .normal, mapped == "p" || mapped == "P" {
             let clipboard = NSPasteboard.general
@@ -93,7 +131,7 @@ final class VimTextView: NSTextView {
         }
         let oldGeneration = engine.registerGeneration
         let oldMode = engine.mode
-        let effect = engine.handle(mapped, text: string, caret: selectedRange().location)
+        let effect = engine.handle(mapped, text: textForCommands, caret: selectedRange().location)
         if engine.registerGeneration != oldGeneration {
             let clipboard = NSPasteboard.general
             clipboard.clearContents()
@@ -126,10 +164,13 @@ final class VimTextView: NSTextView {
         case .beginCommand:
             onCommandRequest?()
         case .repeatSearch(let reverse, let count):
-            showSearchMatch(search.repeatMatch(reverse: reverse, text: string, caret: selectedRange().location, count: count))
+            showSearchMatch(search.repeatMatch(reverse: reverse, text: textForCommands, caret: selectedRange().location, count: count))
         }
         if oldMode != engine.mode {
-            if engine.mode == .insert { engine.invalidateTextCache() }
+            if engine.mode == .insert {
+                commandSnapshot = nil
+                engine.invalidateTextCache()
+            }
             breakUndoCoalescing()
             onModeChange?(engine.mode.label)
         }
@@ -140,7 +181,7 @@ final class VimTextView: NSTextView {
     }
 
     func submitSearch(_ query: String, forward: Bool, count: Int = 1) {
-        showSearchMatch(search.submit(query, forward: forward, text: string, caret: selectedRange().location, count: count))
+        showSearchMatch(search.submit(query, forward: forward, text: textForCommands, caret: selectedRange().location, count: count))
     }
 
     private func showSearchMatch(_ match: LiteralSearch.Match?) {
@@ -162,8 +203,7 @@ final class VimTextView: NSTextView {
 
     override func didChangeText() {
         super.didChangeText()
-        engine.invalidateTextCache()
-        search.invalidateMatches()
+        invalidateCommandText()
         // Native paste, cut, replacement and undo can invalidate a Visual anchor.
         if engine.mode.isVisual {
             engine.reset(mode: .normal)

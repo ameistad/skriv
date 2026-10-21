@@ -3,6 +3,19 @@ import Testing
 @testable import SkrivCore
 
 struct PerformanceCorrectnessTests {
+    @Test func byteIdentityHandlesSharedCopiedAndBridgedStorage() {
+        let texts = ["", "ascii", "é", "e\u{301}", "\0", "a\0b", "a\r\nb", "a\nb",
+                     "👩🏽‍💻", "👩💻", String(repeating: "æøå 👩🏽‍💻 ", count: 100)]
+        for left in texts {
+            for right in texts {
+                let expected = left.utf8.elementsEqual(right.utf8)
+                #expect(left.isByteIdentical(to: right) == expected)
+                #expect((NSMutableString(string: left) as String).isByteIdentical(to: right) == expected)
+                #expect(left.isByteIdentical(to: NSMutableString(string: right) as String) == expected)
+            }
+        }
+    }
+
     @Test func cachedMotionsTrackExactEncodingAndExternalEdits() {
         var engine = VimEngine()
         for text in ["éx", "e\u{301}x", "éx", "a\nbc", "ab\nc", "", "👩🏽‍💻x"] {

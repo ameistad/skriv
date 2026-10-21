@@ -39,6 +39,68 @@ struct NativeEditorTests {
         try body()
     }
 
+    @Test func commandSnapshotTracksDirectStorageEditsAndSearchOffsets() throws {
+        let (document, controller) = try editor()
+        defer { document.close() }
+        let view = controller.textView
+        view.handleVimKey("<Esc>")
+        // Canonically equivalent strings have different UTF-16 positions.
+        // These replacements bypass NSTextView.didChangeText().
+        for (text, next, match) in [("é x é", 1, 4), ("e\u{301} x e\u{301}", 2, 5),
+                                   ("👩🏽‍💻 x é", 7, 10), ("é x é", 1, 4)] {
+            document.textStorage.mutableString.setString(text)
+            view.setSelectedRange(NSRange(location: 0, length: 0))
+            view.handleVimKey("l")
+            #expect(view.selectedRange().location == next)
+            view.submitSearch("é", forward: true)
+            #expect(view.selectedRange().location == match)
+        }
+        document.textStorage.mutableString.setString("")
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 0)
+        view.handleVimKey("n")
+        #expect(view.selectedRange().location == 0)
+        document.textStorage.mutableString.setString("a é")
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.handleVimKey("n")
+        #expect(view.selectedRange().location == 2)
+        // A replacement storage object needs its own notification subscription.
+        let replacement = NSTextStorage(string: "e\u{301}x")
+        view.layoutManager?.replaceTextStorage(replacement)
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 2)
+        replacement.mutableString.setString("éx")
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 1)
+    }
+
+    @Test func commandSnapshotTracksNativeInsertionUndoAndRedo() throws {
+        let (document, controller) = try editor()
+        defer { document.close() }
+        let view = controller.textView
+        edit(document) { view.insertText("éx", replacementRange: NSRange(location: 0, length: 0)) }
+        view.handleVimKey("<Esc>")
+        view.handleVimKey("0")
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 1)
+        view.handleVimKey("i")
+        edit(document) { view.insertText("👩🏽‍💻", replacementRange: NSRange(location: 0, length: 1)) }
+        view.handleVimKey("<Esc>")
+        view.handleVimKey("0")
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 7)
+        view.handleVimKey("u")
+        view.handleVimKey("0")
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 1)
+        view.handleVimKey("<C-r>")
+        view.handleVimKey("0")
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 7)
+    }
+
     @Test func vimDeleteUsesNativeUndoAndPreservesGraphemes() throws {
         try preservingClipboard {
             let (document, controller) = try editor()
