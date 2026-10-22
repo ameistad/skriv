@@ -35,6 +35,21 @@ struct SkrivDocumentTests {
         #expect(try document.data(ofType: SkrivDocument.typeName) == Data(text.utf8))
     }
 
+    @Test func fileEncodingPreservesExactBytesIncludingNULAndDecomposedText() throws {
+        for text in ["", "\0", "e\u{301}\r\n👩🏽‍💻\0é\r", String(repeating: "æøå e\u{301} 🇳🇴\n", count: 100_000)] {
+            let data = Data(text.utf8)
+            let document = SkrivDocument()
+            try document.read(from: data, ofType: SkrivDocument.typeName)
+            #expect(try document.data(ofType: SkrivDocument.typeName) == data)
+        }
+        let document = SkrivDocument()
+        document.textStorage.mutableString.setString("keep")
+        for invalid in [[UInt8](arrayLiteral: 0xC0, 0x80), [0xE2, 0x82], [0xED, 0xA0, 0x80], [0xF4, 0x90, 0x80, 0x80]] {
+            #expect(throws: CocoaError.self) { try document.read(from: Data(invalid), ofType: SkrivDocument.typeName) }
+            #expect(document.textStorage.string == "keep")
+        }
+    }
+
     @Test func invalidUTF8DoesNotReplaceExistingText() throws {
         let document = SkrivDocument()
         document.textStorage.mutableString.setString("Keep me")

@@ -453,3 +453,254 @@ ditto build/Skriv.app build/startup-before/Skriv.app
 python3 scripts/compare-launch.py --before build/startup-before/Skriv.app \
   --pairs 30 --warm 10 --require-readiness
 ```
+
+## Large-file memory — 2026-10-21
+
+Vim's motion index now keeps a String index and UTF-16 offset every 32 graphemes,
+plus line boundaries, instead of a `Character` and integer offset for every
+grapheme. Lookups scan at most one checkpoint block. Long word and whitespace
+motions use a local cursor so sequential scans do not repeatedly traverse those
+blocks. An ASCII fast path builds checkpoints without constructing Characters;
+Swift still determines Unicode grapheme boundaries, including CRLF, combining
+marks and emoji. Character deletions calculate the resulting caret from the
+joined line; line deletions use surviving offsets. Neither builds another
+whole-document index to predict the caret.
+
+Literal search retains at most 4,096 match ranges (64 KiB of range payload).
+Queries with more matches switch to directional searching, preserving overlapping
+matches, canonical equivalence, whole-grapheme boundaries, counts and wrapping.
+Large counts skip complete cycles after enumerating one cycle. A Cocoa search
+snapshot is retained only for this streaming path; character edits release it.
+Queries with few or no matches can still scan the whole document initially.
+Repeated dense searches trade binary-search lookup for scanning to the next
+match, keeping match memory bounded.
+
+The gutter rescans edited lines and their neighbors, then shifts the unchanged
+suffix of its UTF-16 line-start array in place. Same-length edits avoid even the
+suffix shift. Length-changing edits still take O(number of following lines) to
+adjust offsets. Initial gutter indexing remains linear. Final CR, LF, CRLF and
+Unicode line separators retain the trailing empty numbered line.
+
+The file reader, writer, native undo and TextKit stack are unchanged. A separate
+Cocoa encoding experiment did not improve save performance and was removed.
+These changes reduce derived editing state; they do not implement disk-backed
+text storage or a fixed memory ceiling.
+
+### Reproduce and interpret
+
+```sh
+# Before changing sources, preserve them for an identical-workload comparison:
+mkdir -p build/large-file-before
+cp -R Sources build/large-file-before/
+python3 scripts/benchmark-large-files.py --source-root build/large-file-before \
+  --runs 3 --output build/benchmarks/large-before.json
+python3 scripts/benchmark-large-files.py --runs 3 \
+  --output build/benchmarks/large-after.json
+```
+
+The harness compiles with `-O` and whole-module optimization. Every workload runs
+in a fresh process and uses temporary UTF-8 files, a document's real text storage,
+an offscreen editor and gutter. It exercises loading, first and repeated motions,
+first and repeated literal search, edits, index rebuilding and saving. SHA-256
+checks verify exact file contents after restoring edits. Fixtures cover 7.5 MB
+and 75 MB Norwegian/emoji text, a 10 MB single ASCII line, and one million short
+lines (2 MB). No user configuration, files, windows or clipboard are changed.
+Reports include raw timing samples, RSS at each stage, process peak RSS, source
+and fixture hashes, compiler flags and host metadata.
+
+These are sequential desktop runs, not isolated or filesystem-cold trials.
+RSS and peak RSS are not physical footprint. The fixture does not display a
+window or explicitly draw the gutter, and does not measure scrolling, native
+Find, hardware input or compositor presentation. Native selection changes can
+still trigger layout. Edits are single-character, same-length replacements;
+their timings include the gutter update, while the subsequent motion separately
+measures rebuilding the invalidated command snapshot and motion index.
+
+### Results
+
+Apple M3 Pro, arm64, macOS 26.5; Swift 6.3.3. Three fresh processes per fixture
+per build (24 processes total), using the identical fixture hash. Values below
+are medians of the three process peak-RSS samples, taken after all workloads
+including saving. The source hashes in the final after report match the retained
+implementation. Input/output hashes match between builds.
+
+| Fixture | Before peak RSS | After peak RSS | Reduction |
+| --- | ---: | ---: | ---: |
+| 7.5 MB Unicode, 100,000 lines | 279.19 MiB | 116.78 MiB | 58% |
+| 75 MB Unicode, 1,000,000 lines | 2,302.80 MiB | 571.16 MiB | 75% |
+| 10 MB ASCII, one line | 877.98 MiB | 444.81 MiB | 49% |
+| 2 MB ASCII, 1,000,000 lines | 196.31 MiB | 114.42 MiB | 42% |
+
+For the 75 MB Unicode fixture:
+
+| Operation, median | Before | After |
+| --- | ---: | ---: |
+| First native Vim motion | 3,749.30 ms | 2,448.79 ms |
+| First literal search (`blåbær`, one million matches) | 2,087.20 ms | 110.82 ms |
+| Same-length storage edit with gutter attached | 249.09 ms | 0.062 ms |
+| First motion after that edit | 3,381.62 ms | 2,436.68 ms |
+| Cached `l` + `h` command pair | 0.0344 ms | 0.0333 ms |
+| Repeat literal search | 0.000166 ms | 0.001958 ms |
+
+First-use timings have three samples each; edits/rebuilds have nine and cached
+motion/search have 300 each. Dense repeat searches are slower in absolute terms
+by approximately two microseconds, in exchange for bounded match storage.
+Loading/saving showed no material improvement and their implementation is
+unchanged. These measurements establish lower memory use for these workloads,
+not a universal maximum file size or a guarantee of responsive UI at every size.
+
+**Remaining limits:** the snapshot and initial motion index still scale with the
+whole document. A first motion after an edit to 75 MB takes roughly 2.4 seconds.
+An enormous single paragraph remains costly in the native editor: the 10 MB
+single-line fixture takes 3.54 seconds for its first native motion and 1.72
+seconds after an edit. The corresponding engine-only initial index in a separate
+release smoke measurement took about 19 ms (previously 191 ms), locating the
+remaining dominant cost outside the motion index. Long word scans and edits to
+such lines remain linear; visible scrolling/layout needs its own future profiling.
+The editor is still an in-memory TextKit document, not a streaming file viewer.
+
+Validation: all 102 Swift tests pass, including sparse Unicode boundaries,
+overlapping/canonical searches with bounded caches and huge counts, incremental
+line-index updates across replacements and CRLF joins, joined-grapheme deletion,
+and exact UTF-8 round trips. The differential Vim corpus passes all 2,158 cases.
+The optimized app builds and signs successfully at `build/Skriv.app`.
+
+Raw reports: [before](../build/benchmarks/large-before.json),
+[after](../build/benchmarks/large-after.json). Reports are local ignored artifacts;
+the tables above preserve the results for checkouts without them.
+
+## Incremental motion index — follow-up
+
+The preceding 75 MB result still rebuilt the whole motion index after each edit.
+This follow-up keeps the existing native text storage and incrementally updates
+its derived index. The design takes two ideas from other editors:
+
+- [VS Code's text-buffer design](https://code.visualstudio.com/blogs/2018/03/23/text-buffer-reimplementation)
+  keeps text in chunks and stores metadata relative to those chunks, avoiding
+  per-character metadata updates throughout the file after an insertion.
+- [Xi's minimal invalidation](https://xi-editor.io/docs/rope_science_12.html)
+  propagates edit deltas and preserves unaffected cached results.
+
+Skriv uses immutable chunks targeting 16,384 UTF-16 units, extended to the next
+complete CR/LF line boundary. Each owns the sparse grapheme index introduced in
+the previous round. Prefix arrays of character counts, UTF-16 lengths and line
+counts translate local positions to document positions. On a native character
+edit, only the affected chunks and their immediate neighbors are copied and
+reindexed; small prefix arrays are then refreshed. Neighbor inclusion protects
+CRLF joins and grapheme changes caused by deleting separators.
+
+This is a derived index, not a piece-table document implementation or a second
+editable text owner. Prefix updates cost O(number of chunks); a balanced tree
+would only be warranted if that small remaining cost becomes significant in
+measurements. Motion commands no longer create a whole-document Swift snapshot.
+Search still creates its own disposable snapshot when requested.
+
+The chunk index survives Insert mode. Storage notifications update it for native
+typing, direct mutations, replacement, undo and redo. Attribute-only edits leave
+it intact; replacing text storage discards it and switches the observer. The
+view's subsequent `didChangeText` no longer discards an already updated index.
+Keeping derived chunks while typing trades some retained memory for avoiding
+the expensive rebuild when returning to Normal mode. Editors that never enter
+Vim mode still do not allocate the motion index.
+
+The benchmark now measures complete edit/selection/motion cycles, in addition
+to the individual storage notification and following command. It includes
+single-character insertion and deletion as well as same-length replacement,
+with assertions for each resulting caret. This prevents moving index work into
+the edit notification from looking like an end-to-end speedup by itself.
+
+### Follow-up results
+
+Same Apple M3 Pro, macOS 26.5, Swift 6.3.3 and release compiler flags. Three fresh
+processes per fixture per build, run sequentially on the active desktop. The
+before build is the retained memory-optimized implementation from the preceding
+section. Both sides use the expanded fixture; source and fixture hashes are
+recorded, final-source hashes were checked, and all input/output hashes match.
+
+For the 75 MB Unicode fixture, these are **complete cycles**, including storage
+editing, index maintenance in notifications, selection placement, and the next
+native `l` command:
+
+| Cycle, median | Before | After |
+| --- | ---: | ---: |
+| Same-length replacement + motion | 2,431.19 ms | 3.615 ms |
+| Insert one character + motion | 2,458.90 ms | 4.165 ms |
+| Delete one character + motion | 2,440.69 ms | 3.918 ms |
+
+Replacement cycles have nine samples per build; insertion and deletion have six
+each. Replacement notification time rose from 0.095 ms to 1.475 ms because it now
+updates the affected chunks. The subsequent motion fell from 2,430.95 ms to
+2.110 ms. The complete cycle improves by about 673×, so this is an end-to-end
+reduction in measured work, not just shifting the delay earlier.
+
+Median process peak RSS for this workload is effectively unchanged:
+570.67 MiB before and 570.61 MiB after. The 7.5 MB replacement cycle improved from
+243.21 ms to 3.337 ms; the one-million-short-lines fixture improved from 44.98 ms
+to 1.768 ms. These remain offscreen native measurements, not hardware-to-display
+latency or a visible-window scrolling benchmark.
+
+**Remaining limits:** first-time indexing still scans the document (2.119 seconds
+for 75 MB in this run). Very long logical lines are intentionally kept whole to
+preserve Unicode and line semantics, so a 10 MB single-line edit still reindexes
+that whole chunk and incurs native layout work: 1.591 seconds for a replacement
+cycle, versus 1.734 seconds before. Its first native motion takes 3.402 seconds.
+Large replacements or coalesced edits spanning much of the document also rebuild
+the affected extent. This change fixes repeat whole-document rebuilding for
+small edits in multiline files; it does not claim to solve those distinct cases.
+
+Validation: all **105 Swift tests** pass. Added checks compare incrementally
+updated indexes with fresh indexes through Unicode replacements, chunk boundaries,
+CRLF joins, large deletions, empty documents, Normal/Visual commands, registers,
+Insert transitions, undo/redo and batched storage edits. The extended differential
+Vim corpus passes **2,438 cases**, including long lines and chunk-boundary commands.
+The release app builds and signs successfully.
+
+```sh
+# Preserve Sources before this change in build/incremental-before, then:
+python3 scripts/benchmark-large-files.py --source-root build/incremental-before \
+  --runs 3 --output build/benchmarks/incremental-before.json
+python3 scripts/benchmark-large-files.py --runs 3 \
+  --output build/benchmarks/incremental-after.json
+swift test
+python3 scripts/check-vim-conformance.py --large-files
+./scripts/build-app.sh release
+```
+
+Raw reports: [before](../build/benchmarks/incremental-before.json),
+[after](../build/benchmarks/incremental-after.json).
+
+## Planned: reduce first-command indexing
+
+Status: **not implemented**. The incremental index above still eagerly indexes
+all graphemes on its first use. The 2.119-second first native command measurement
+also includes native selection/layout work; it is not an isolated index timer.
+
+1. Separate file loading, line scanning, character indexing and command execution
+   in the benchmark. Add visible-window measurements alongside the existing
+   offscreen measurements.
+2. Compare Skriv, Neovim and available GUI editors using identical Unicode,
+   many-short-lines and single-long-line files. Record opening-to-interactive
+   time, first navigation and memory. Measure application startup separately;
+   document wrapping, highlighting, plugins and other configuration differences.
+3. Move internal Vim positions from global grapheme counts to UTF-16 offsets.
+   Replace index arithmetic with explicit next/previous-grapheme and column
+   operations while preserving current Unicode and Vim semantics.
+4. Collect lightweight chunk/line metadata up front and build detailed character
+   indexes only for chunks visited by a command. Line-number jumps, `gg` and `G`
+   must not require character indexing of preceding chunks. Native text storage
+   remains the authoritative document.
+5. Bound character-cache memory with a byte budget and eviction. Avoid copying
+   untouched text; invalidate affected cached chunks on edits without indexing
+   previously untouched regions. Audit line-separator semantics before sharing
+   metadata with the gutter, whose current separator rules differ from Vim's.
+6. Validate uncached jumps, eviction, Unicode boundaries, CRLF joins, selections,
+   undo/redo and storage replacement through Swift tests and Neovim comparisons.
+   Repeat fresh-process benchmarks and record the results before shipping.
+
+Proposed acceptance targets, not measured results: at least 5x faster first
+native command on the 75 MB multiline fixture; preserve roughly 4 ms small
+edit-plus-motion cycles; reduce memory after opening and limited navigation;
+bound character-cache growth during traversal; and preserve correctness.
+Profile enormous single-line native layout separately before selecting that
+follow-up's implementation. Begin with measurement and the UTF-16 refactor,
+then add lazy caching after existing behavior passes unchanged.

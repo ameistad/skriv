@@ -26,9 +26,9 @@ final class VimTextView: NSTextView {
     private var commandSnapshot: String?
     private static let linewiseClipboardType = NSPasteboard.PasteboardType("no.skriv.linewise")
 
-    /// Bridge and transcode AppKit's mutable text once per edit, not once per key.
-    /// The snapshot is shared by the motion/search indexes and never owns edits.
-    private var textForCommands: String {
+    /// Subscribe before using either motion chunks or the disposable search snapshot.
+    /// Replacing storage invalidates both; edits update only affected motion chunks.
+    private func observeCommandStorage() {
         if commandStorage !== textStorage {
             if let commandStorage {
                 NotificationCenter.default.removeObserver(self, name: NSTextStorage.didProcessEditingNotification,
@@ -41,6 +41,10 @@ final class VimTextView: NSTextView {
             }
             invalidateCommandText()
         }
+    }
+
+    private var textForCommands: String {
+        observeCommandStorage()
         if let commandSnapshot { return commandSnapshot }
         var snapshot = string
         snapshot.makeContiguousUTF8()
@@ -51,7 +55,9 @@ final class VimTextView: NSTextView {
     @objc private func commandStorageChanged(_ notification: Notification) {
         guard let storage = notification.object as? NSTextStorage,
               storage.editedMask.contains(.editedCharacters) else { return }
-        invalidateCommandText()
+        commandSnapshot = nil
+        search.invalidateMatches()
+        engine.textDidChange(storage.mutableString, editedRange: storage.editedRange, changeInLength: storage.changeInLength)
     }
 
     private func invalidateCommandText() {
@@ -131,7 +137,9 @@ final class VimTextView: NSTextView {
         }
         let oldGeneration = engine.registerGeneration
         let oldMode = engine.mode
-        let effect = engine.handle(mapped, text: textForCommands, caret: selectedRange().location)
+        observeCommandStorage()
+        guard let storage = textStorage else { return false }
+        let effect = engine.handle(mapped, storage: storage.mutableString, caret: selectedRange().location)
         if engine.registerGeneration != oldGeneration {
             let clipboard = NSPasteboard.general
             clipboard.clearContents()
@@ -169,7 +177,6 @@ final class VimTextView: NSTextView {
         if oldMode != engine.mode {
             if engine.mode == .insert {
                 commandSnapshot = nil
-                engine.invalidateTextCache()
             }
             breakUndoCoalescing()
             onModeChange?(engine.mode.label)
@@ -203,7 +210,10 @@ final class VimTextView: NSTextView {
 
     override func didChangeText() {
         super.didChangeText()
-        invalidateCommandText()
+        // Character edits already updated the motion chunks in the storage
+        // notification. Do not discard that work a second time here.
+        commandSnapshot = nil
+        search.invalidateMatches()
         // Native paste, cut, replacement and undo can invalidate a Visual anchor.
         if engine.mode.isVisual {
             engine.reset(mode: .normal)

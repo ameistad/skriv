@@ -63,6 +63,7 @@ qa!
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--nvim", help="Path to Neovim (otherwise PATH or the standard Homebrew location).")
+    parser.add_argument("--large-files", action="store_true", help="Also exercise chunk boundaries and long lines")
     args = parser.parse_args()
     nvim = args.nvim or shutil.which("nvim")
     if not nvim and Path("/opt/homebrew/bin/nvim").is_file():
@@ -77,6 +78,12 @@ def main() -> int:
         for caret in sorted({0, max(0, len(text) // 2), max(0, len(text) - 1)})
         for keys in COMMANDS
     ]
+    if args.large_files:
+        large_commands = ["l", "w", "b", "e", "j", "k", "G", "gg", "2dd", "dj", "dk", "dG", "dgg",
+                          "vjy", "vGd", "Vjd", "yyp", "dw", "d$", "cw"]
+        for text in [("one two three " * 7 + "\n") * 700, "one two three " * 5000]:
+            for caret in [0, 16_383, 16_384, 32_767, 32_768, len(text) // 2, len(text) - 1]:
+                cases.extend({"text": text, "caret": caret, "keys": keys} for keys in large_commands)
     with tempfile.TemporaryDirectory(prefix="skriv-vim-conformance-") as directory:
         work = Path(directory)
         (work / "cases.json").write_text(json.dumps(cases), encoding="utf-8")

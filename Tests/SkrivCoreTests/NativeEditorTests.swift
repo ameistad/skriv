@@ -76,6 +76,43 @@ struct NativeEditorTests {
         #expect(view.selectedRange().location == 1)
     }
 
+    @Test func motionChunksSurviveInsertUndoRedoAndCoalescedStorageEdits() throws {
+        let (document, controller) = try editor()
+        defer { document.close() }
+        let view = controller.textView
+        let original = String(repeating: "abc 👩🏽‍💻\r\n", count: 10_000)
+        document.textStorage.mutableString.setString(original)
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.handleVimKey("<Esc>")
+        view.handleVimKey("i")
+        edit(document) { view.insertText("e\u{301}", replacementRange: NSRange(location: 0, length: 0)) }
+        #expect(view.engine.lastReindexedUTF16Length < 70_000)
+        view.handleVimKey("<Esc>")
+        #expect(view.selectedRange().location == 0)
+        #expect(view.engine.lastReindexedUTF16Length < 70_000)
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 2)
+        view.handleVimKey("u")
+        #expect(document.textStorage.string == original)
+        #expect(view.engine.lastReindexedUTF16Length < 70_000)
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 1)
+        view.handleVimKey("<C-r>")
+        #expect(document.textStorage.string == "e\u{301}" + original)
+        #expect(view.engine.lastReindexedUTF16Length < 70_000)
+        let storage = document.textStorage
+        storage.beginEditing()
+        storage.replaceCharacters(in: NSRange(location: 0, length: 2), with: "é")
+        storage.replaceCharacters(in: NSRange(location: storage.length - 2, length: 2), with: "\nlast")
+        storage.endEditing()
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 1)
+        view.handleVimKey("G")
+        #expect(view.selectedRange().location == storage.length - 4)
+    }
+
     @Test func commandSnapshotTracksNativeInsertionUndoAndRedo() throws {
         let (document, controller) = try editor()
         defer { document.close() }
