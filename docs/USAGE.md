@@ -44,6 +44,8 @@ The source mark is from [Streamline](https://streamlinehq.com).
   `⌘T`, `⌘N`, and the tab bar's **+** create and focus an untitled tab immediately
   after the active tab. `⇧⌘N` creates a separate window.
 - `Ctrl-Tab` / `Ctrl-Shift-Tab` switch tabs in visible order, wrapping at either end.
+  `⌘1`–`⌘9` select tabs 1–9 in the current window; a number with no matching tab does nothing.
+  Shortcut hints beside the tab titles follow the visible order as tabs move or close.
   Each document retains its text, undo, selection, scroll position, Vim mode, and
   search state. Drag tabs to reorder or detach them; **Window → Move Tab to New
   Window** and **Merge All Windows** also manage native tab groups.

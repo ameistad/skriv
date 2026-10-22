@@ -96,6 +96,113 @@ struct DocumentTabTests {
         #expect(secondView.string.isEmpty)
     }
 
+    @Test func numberedShortcutsSelectTabsInVisibleOrder() throws {
+        let first = try newDocument()
+        defer { first.close() }
+        let firstWindow = try window(first)
+        let second = try newDocument(in: TabDestination(window: firstWindow))
+        defer { second.close() }
+        let secondWindow = try window(second)
+        let third = try newDocument(in: TabDestination(window: firstWindow))
+        defer { third.close() }
+        let thirdWindow = try window(third)
+        let separate = try newDocument()
+        defer { separate.close() }
+        firstWindow.makeKeyAndOrderFront(nil)
+        firstWindow.makeFirstResponder(try controller(first).textView)
+
+        let app = NSApplication.shared
+        let oldMenu = app.mainMenu
+        let oldWindowsMenu = app.windowsMenu
+        defer {
+            app.mainMenu = oldMenu
+            app.windowsMenu = oldWindowsMenu
+        }
+        let delegate = AppDelegate()
+        let menu = delegate.makeMenu()
+        app.mainMenu = menu
+        let windowMenu = try #require(app.windowsMenu)
+        let shortcuts = windowMenu.items.filter { $0.action == #selector(DocumentWindowController.selectNumberedTab(_:)) }
+        #expect(shortcuts.map(\.tag) == Array(1...9))
+        #expect(shortcuts.map(\.keyEquivalent) == (1...9).map(String.init))
+        #expect(shortcuts.allSatisfy { $0.keyEquivalentModifierMask == [.command] && $0.target == nil })
+        // The test host has no key window. Supply the controller that the app's
+        // responder chain would resolve, while exercising the real menu shortcut.
+        for item in shortcuts { item.target = try controller(first) }
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: [.command], timestamp: 0, windowNumber: firstWindow.windowNumber,
+            context: nil, characters: "2", charactersIgnoringModifiers: "2", isARepeat: false, keyCode: 19))
+        #expect(menu.performKeyEquivalent(with: event))
+        #expect(firstWindow.tabGroup?.selectedWindow === thirdWindow)
+        #expect(thirdWindow.firstResponder === (try controller(third)).textView)
+        #expect(try window(separate).tabGroup?.windows.count == 1)
+
+        let missingTab = try #require(shortcuts.last)
+        let thirdController = try controller(third)
+        #expect(!thirdController.validateMenuItem(missingTab))
+        thirdController.selectNumberedTab(missingTab)
+        #expect(firstWindow.tabGroup?.selectedWindow === thirdWindow)
+
+        let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+                             styleMask: [.titled], backing: .buffered, defer: false)
+        thirdWindow.beginSheet(sheet)
+        let firstShortcut = try #require(shortcuts.first)
+        #expect(!thirdController.validateMenuItem(firstShortcut))
+        thirdController.selectNumberedTab(firstShortcut)
+        #expect(firstWindow.tabGroup?.selectedWindow === thirdWindow)
+        thirdWindow.endSheet(sheet)
+        sheet.orderOut(nil)
+        #expect(firstWindow.tabGroup?.windows == [firstWindow, thirdWindow, secondWindow])
+    }
+
+    @Test func shortcutHintsFollowInsertionReorderingClosingAndDetaching() throws {
+        let first = try newDocument()
+        defer { first.close() }
+        let firstWindow = try window(first)
+        func hint(_ window: NSWindow) -> String? {
+            (window.tab.accessoryView as? NSTextField)?.stringValue
+        }
+        #expect(hint(firstWindow) == "")
+        let second = try newDocument(in: TabDestination(window: firstWindow))
+        defer { second.close() }
+        let secondWindow = try window(second)
+        let third = try newDocument(in: TabDestination(window: firstWindow))
+        defer { third.close() }
+        let thirdWindow = try window(third)
+        #expect([firstWindow, thirdWindow, secondWindow].map(hint) == ["⌘1", "⌘2", "⌘3"])
+        let titles = [firstWindow, secondWindow, thirdWindow].map(\.title)
+
+        let group = try #require(firstWindow.tabGroup)
+        group.insertWindow(secondWindow, at: 0)
+        NSApplication.shared.updateWindows()
+        #expect(group.windows == [secondWindow, firstWindow, thirdWindow])
+        #expect(group.windows.map(hint) == ["⌘1", "⌘2", "⌘3"])
+        #expect([firstWindow, secondWindow, thirdWindow].map(\.title) == titles)
+
+        second.close()
+        NSApplication.shared.updateWindows()
+        #expect([firstWindow, thirdWindow].map(hint) == ["⌘1", "⌘2"])
+        thirdWindow.moveTabToNewWindow(nil)
+        NSApplication.shared.updateWindows()
+        #expect([firstWindow, thirdWindow].map(hint) == ["", ""])
+    }
+
+    @Test func ninthShortcutSelectsNinthTabEvenWithMoreTabs() throws {
+        var opened: [SkrivDocument] = []
+        defer { for document in opened { document.close() } }
+        let destination = TabDestination(window: nil)
+        for _ in 0..<10 { opened.append(try newDocument(in: destination)) }
+        let firstWindow = try window(opened[0])
+        let ninthWindow = try window(opened[8])
+        let tenthWindow = try window(opened[9])
+        #expect((ninthWindow.tab.accessoryView as? NSTextField)?.stringValue == "⌘9")
+        #expect((tenthWindow.tab.accessoryView as? NSTextField)?.stringValue == "")
+        let item = NSMenuItem(title: "Select Tab 9", action: #selector(DocumentWindowController.selectNumberedTab(_:)), keyEquivalent: "9")
+        item.tag = 9
+        try controller(opened[9]).selectNumberedTab(item)
+        #expect(firstWindow.tabGroup?.selectedWindow === ninthWindow)
+    }
+
     @Test func detachingATabHidesBothSingleDocumentTabBars() throws {
         let first = try newDocument()
         defer { first.close() }

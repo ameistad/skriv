@@ -95,7 +95,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         alert.runModal()
     }
 
-    private func makeMenu() -> NSMenu {
+    func makeMenu() -> NSMenu {
         let menu = NSMenu()
         let appMenu = submenu("Skriv", in: menu)
         appMenu.addItem(withTitle: "About Skriv", action: #selector(showAbout(_:)), keyEquivalent: "").target = self
@@ -157,6 +157,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         nextTab.keyEquivalentModifierMask = [.control]
         let previousTab = window.addItem(withTitle: "Previous Tab", action: #selector(DocumentWindowController.previousTab(_:)), keyEquivalent: "\t")
         previousTab.keyEquivalentModifierMask = [.control, .shift]
+        for number in 1...9 {
+            let item = window.addItem(withTitle: "Select Tab \(number)",
+                                      action: #selector(DocumentWindowController.selectNumberedTab(_:)),
+                                      keyEquivalent: String(number))
+            item.keyEquivalentModifierMask = [.command]
+            item.tag = number
+        }
+        window.addItem(.separator())
         window.addItem(withTitle: "Move Tab to New Window", action: #selector(NSWindow.moveTabToNewWindow(_:)), keyEquivalent: "")
         window.addItem(withTitle: "Merge All Windows", action: #selector(NSWindow.mergeAllWindows(_:)), keyEquivalent: "")
         window.delegate = self

@@ -9,6 +9,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
     let textView: VimTextView
     private let scrollView: NSScrollView
     private let modeLabel = NSTextField(labelWithString: "INSERT")
+    private let tabShortcutLabel = NSTextField(labelWithString: "")
     private var numberRuler: LineNumberRuler?
     private var editorBottom: NSLayoutConstraint?
     private var promptBottom: NSLayoutConstraint?
@@ -115,6 +116,14 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         self.editorBottom = editorBottom
         shouldCascadeWindows = false
         window.delegate = self
+        tabShortcutLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        tabShortcutLabel.textColor = .secondaryLabelColor
+        tabShortcutLabel.alignment = .right
+        window.tab.accessoryView = tabShortcutLabel
+        // Native drag reordering does not have a dedicated delegate callback.
+        tabShortcutLabel.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(tabShortcutFrameDidChange(_:)),
+                                               name: NSView.frameDidChangeNotification, object: tabShortcutLabel)
         textView.delegate = self
         window.initialFirstResponder = textView
         textView.onModeChange = { [weak self] mode in self?.modeLabel.stringValue = mode }
@@ -189,13 +198,31 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     private func updateTabBarVisibility() {
         guard !isClosing, !isAdjustingTabBar, let window,
-              let group = window.tabGroup,
-              group.isTabBarVisible != (group.windows.count > 1) else { return }
+              let group = window.tabGroup else { return }
         isAdjustingTabBar = true
         defer { isAdjustingTabBar = false }
+        updateTabShortcutLabels()
+        guard group.isTabBarVisible != (group.windows.count > 1) else { return }
         let frame = window.frame
         window.toggleTabBar(nil)
         if !isGroupInFullScreen { window.setFrame(frame, display: false) }
+    }
+
+    @objc private func tabShortcutFrameDidChange(_ notification: Notification) {
+        updateTabShortcutLabels()
+    }
+
+    private func updateTabShortcutLabels() {
+        guard !isClosing, let windows = window?.tabGroup?.windows else { return }
+        for (index, member) in windows.enumerated() {
+            guard let controller = member.windowController as? DocumentWindowController else { continue }
+            let shortcut = windows.count > 1 && index < 9 ? "⌘\(index + 1)" : ""
+            let label = controller.tabShortcutLabel
+            guard label.stringValue != shortcut else { continue }
+            label.stringValue = shortcut
+            label.setAccessibilityLabel(shortcut.isEmpty ? "" : "Select tab \(index + 1), Command \(index + 1)")
+            label.sizeToFit()
+        }
     }
 
     override func newWindowForTab(_ sender: Any?) {
@@ -204,6 +231,15 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     @objc func nextTab(_ sender: Any?) { selectTab(offset: 1) }
     @objc func previousTab(_ sender: Any?) { selectTab(offset: -1) }
+
+    @objc func selectNumberedTab(_ sender: NSMenuItem) {
+        guard (1...9).contains(sender.tag), let group = window?.tabGroup,
+              sender.tag <= group.windows.count,
+              !group.windows.contains(where: { $0.attachedSheet != nil }) else { return }
+        let target = group.windows[sender.tag - 1]
+        group.selectedWindow = target
+        target.makeKeyAndOrderFront(nil)
+    }
 
     private func selectTab(offset: Int) {
         guard let window, let group = window.tabGroup, group.windows.count > 1,
@@ -215,6 +251,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(selectNumberedTab(_:)) {
+            return (1...9).contains(menuItem.tag)
+                && menuItem.tag <= (window?.tabGroup?.windows.count ?? 0)
+                && !(window?.tabGroup?.windows.contains { $0.attachedSheet != nil } ?? false)
+        }
         if menuItem.action == #selector(nextTab(_:)) || menuItem.action == #selector(previousTab(_:)) {
             return (window?.tabGroup?.windows.count ?? 0) > 1
                 && !(window?.tabGroup?.windows.contains { $0.attachedSheet != nil } ?? false)

@@ -26,7 +26,8 @@ The build script defaults to release; use `./scripts/build-app.sh debug` for an 
 ## Basics
 
 `⌘T` or `⌘N` creates a tab, `⌘W` closes it, and `⇧⌘N` creates a separate window.
-`Ctrl-Tab` / `Ctrl-Shift-Tab` switch tabs in visible order. `⌘S` saves and `⌘F` finds text.
+`Ctrl-Tab` / `Ctrl-Shift-Tab` switch tabs in visible order. `⌘1`–`⌘9` select the corresponding
+tab, with shortcut hints beside the tab titles. `⌘S` saves and `⌘F` finds text.
 `Esc` enters Normal mode; `i` resumes typing. When line numbers are enabled, the active line number is bold.
 In Normal mode, `:w` saves, `:q` closes, and `:wq` saves and closes (press Return to run).
 `:q` protects unsaved changes; `:q!` discards them. `:x` saves only if changed, then closes.
