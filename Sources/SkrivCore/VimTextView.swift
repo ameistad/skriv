@@ -15,12 +15,12 @@ final class VimTextView: NSTextView {
     var tabWidth = 8
     var shiftWidth = 8
     var writingWidth = 72 {
-        didSet { updateWritingInsets() }
+        didSet { updateWritingLayout() }
     }
     var wrapsToWritingColumn = false {
-        didSet { updateWritingInsets() }
+        didSet { updateWritingLayout() }
     }
-    private var updatingWritingInsets = false
+    private var updatingWritingLayout = false
     private var exportedClipboardChangeCount: Int?
     private weak var commandStorage: NSTextStorage?
     private var commandSnapshot: String?
@@ -71,21 +71,26 @@ final class VimTextView: NSTextView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        updateWritingInsets()
+        updateWritingLayout()
     }
 
-    /// Keep the native editor and scrollbar full-width while centering the text.
+    /// Keep the native editor and scrollbar full-width with a left-aligned text column.
     /// Font-relative width preserves a readable measure when the configured font changes.
-    func updateWritingInsets() {
-        guard !updatingWritingInsets else { return }
-        updatingWritingInsets = true
-        defer { updatingWritingInsets = false }
+    func updateWritingLayout() {
+        guard !updatingWritingLayout, let container = textContainer else { return }
+        updatingWritingLayout = true
+        defer { updatingWritingLayout = false }
+        container.widthTracksTextView = false
+        let inset = NSSize(width: 24, height: 24)
+        if textContainerInset != inset { textContainerInset = inset }
         let font = font ?? .monospacedSystemFont(ofSize: 16, weight: .regular)
         let advance = ("0" as NSString).size(withAttributes: [.font: font]).width
-        let columnWidth = CGFloat(writingWidth) * advance + 2 * (textContainer?.lineFragmentPadding ?? 0)
-        let horizontalInset = wrapsToWritingColumn ? max(24, (bounds.width - columnWidth) / 2) : 24
-        let inset = NSSize(width: horizontalInset, height: 24)
-        if textContainerInset != inset { textContainerInset = inset }
+        let columnWidth = CGFloat(writingWidth) * advance + 2 * container.lineFragmentPadding
+        let availableWidth = max(0, bounds.width - 2 * inset.width)
+        let width = wrapsToWritingColumn ? min(columnWidth, availableWidth) : CGFloat.greatestFiniteMagnitude
+        if container.containerSize.width != width {
+            container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        }
     }
 
     override func keyDown(with event: NSEvent) {

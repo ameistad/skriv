@@ -58,7 +58,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         let layout = NSLayoutManager()
         let container = NSTextContainer(containerSize: NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude))
-        container.widthTracksTextView = true
+        container.widthTracksTextView = false
         layout.addTextContainer(container)
         document.textStorage.addLayoutManager(layout)
         textView = VimTextView(frame: scrollView.contentView.bounds, textContainer: container)
@@ -457,11 +457,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         scrollView.hasHorizontalScroller = !settings.wrap
         textView.isHorizontallyResizable = !settings.wrap
         textView.autoresizingMask = settings.wrap ? [.width] : []
-        textView.textContainer?.widthTracksTextView = settings.wrap
         textView.wrapsToWritingColumn = settings.wrap
-        textView.textContainer?.containerSize = NSSize(
-            width: settings.wrap ? scrollView.contentSize.width : CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude)
         if settings.wrap { textView.setFrameSize(NSSize(width: scrollView.contentSize.width, height: textView.frame.height)) }
         let showNumbers = settings.number || settings.relativeNumber
         if showNumbers, numberRuler == nil {
@@ -474,7 +470,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         numberRuler?.editorBackground = settings.lineNumberBackground.map(EditorTheme.color) ?? background
         scrollView.hasVerticalRuler = showNumbers
         scrollView.rulersVisible = showNumbers
-        textView.updateWritingInsets()
+        textView.updateWritingLayout()
         textView.needsDisplay = true
     }
 

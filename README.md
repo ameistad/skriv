@@ -6,7 +6,7 @@ A fast, lightweight macOS text editor with native editing and a focused Vim subs
 Built with Swift and AppKit, with no external dependencies.
 
 - Native document tabs, with separate windows and a remembered window size and position.
-- Centers writing in a responsive 72-character column, with word wrapping by default.
+- Left-aligns writing in a responsive column capped at 72 characters, with word wrapping by default.
 - Dark by default, with Etterglød colors and a simple `~/.config/skriv/config.skriv` configuration file.
 - Vim motions, Visual selection, literal search, and native Find/Replace.
 - UTF-8 files, native undo, and explicit save/discard controls.

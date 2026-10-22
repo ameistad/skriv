@@ -34,8 +34,8 @@ The source mark is from [Streamline](https://streamlinehq.com).
   mode. The mode is shown at the bottom.
 - Dark appearance and the built-in Etterglød (`etterglod.nvim`) plain-text
   palette are the defaults, independently of macOS appearance.
-- Writing uses a centered column approximately 72 characters wide in the current
-  font, shrinking to fit smaller windows with at least 24 points of side padding.
+- Writing uses a left-aligned column capped at approximately 72 characters in the
+  current font, shrinking to fit smaller windows with 24 points of side padding.
   Built-in settings wrap at word boundaries. Wrapping changes only presentation,
   never the saved text. Configure `writing-width`, `wrap`, and `word-wrap` in
   `config.skriv`; disabling wrapping restores horizontal scrolling.
@@ -198,7 +198,7 @@ keybind = L=l
 | --- | --- | --- |
 | `font-family` | `monospace` | Installed font family or PostScript name; unavailable fonts fall back to system monospace |
 | `font-size` | `16` | Points, 6–72; fractional sizes allowed |
-| `writing-width` | `72` | Centered column width in font character advances, 20–500; shrinks to fit the window |
+| `writing-width` | `72` | Maximum column width in font character advances, 20–500; left-aligned and shrinks to fit the window |
 | `wrap` | `true` | Wrap presentation; `false` enables horizontal scrolling |
 | `word-wrap` | `true` | Break wrapping at word boundaries; `false` allows character boundaries |
 | `line-numbers` | `none` | `none`, `absolute`, `relative`, or `both` |

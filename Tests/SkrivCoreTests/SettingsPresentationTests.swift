@@ -134,7 +134,7 @@ struct SettingsPresentationTests {
         controller.applySettings(settings)
         #expect(view.font?.pointSize == 19)
         #expect(view.defaultParagraphStyle?.lineBreakMode == .byWordWrapping)
-        #expect(view.textContainer?.widthTracksTextView == true)
+        #expect(view.wrapsToWritingColumn)
         #expect(scroll.rulersVisible)
         #expect(view.shiftWidth == 4)
         let advance = (" " as NSString).size(withAttributes: [.font: try #require(view.font)]).width
@@ -150,7 +150,7 @@ struct SettingsPresentationTests {
         #expect(!scroll.rulersVisible)
 
         controller.applySettings(nil)
-        #expect(view.textContainer?.widthTracksTextView == true)
+        #expect(view.wrapsToWritingColumn)
         #expect(!scroll.hasHorizontalScroller)
         #expect(view.frame.width == scroll.contentSize.width)
     }
@@ -191,8 +191,8 @@ struct SettingsPresentationTests {
         let advance = ("0" as NSString).size(withAttributes: [.font: try #require(view.font)]).width
         let wideWidth = container.containerSize.width
         #expect(abs(wideWidth - 2 * container.lineFragmentPadding - 72 * advance) < 1)
-        #expect(view.textContainerInset.width > 24)
-        #expect(abs(view.textContainerOrigin.x - (view.bounds.width - wideWidth) / 2) < 1)
+        #expect(view.textContainerInset.width == 24)
+        #expect(view.textContainerOrigin.x == 24)
         #expect(view.defaultParagraphStyle?.lineBreakMode == .byWordWrapping)
         var firstLine = NSRange()
         _ = layout.lineFragmentRect(forGlyphAt: 0, effectiveRange: &firstLine)
@@ -202,9 +202,11 @@ struct SettingsPresentationTests {
 
         resize(440)
         #expect(view.textContainerInset.width == 24)
+        #expect(view.textContainerOrigin.x == 24)
         #expect(container.containerSize.width < wideWidth)
         #expect(view.enclosingScrollView?.hasHorizontalScroller == false)
         resize(1400)
+        #expect(view.textContainerOrigin.x == 24)
         #expect(abs(container.containerSize.width - wideWidth) < 1)
         #expect(view.string == text)
         #expect(view.selectedRange() == NSRange(location: 12, length: 5))
@@ -234,7 +236,7 @@ struct SettingsPresentationTests {
         #expect(view.enclosingScrollView?.hasHorizontalScroller == true)
         controller.applySettings(nil)
         view.layoutManager?.ensureLayout(for: container)
-        #expect(view.textContainerInset.width > 24)
+        #expect(view.textContainerInset.width == 24)
         #expect(container.containerSize.width < 800)
         #expect(!document.isDocumentEdited)
     }
