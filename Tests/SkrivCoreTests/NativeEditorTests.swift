@@ -113,6 +113,39 @@ struct NativeEditorTests {
         #expect(view.selectedRange().location == storage.length - 4)
     }
 
+    @Test func lazyMotionCacheFollowsReplacementStorageAndIgnoresDetachedStorage() throws {
+        let (document, controller) = try editor()
+        defer { document.close() }
+        let view = controller.textView
+        let tail = "\n" + String(repeating: "unvisited 👩🏽‍💻\n", count: 10_000)
+        let detached = document.textStorage
+        detached.mutableString.setString("éxx" + tail)
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.handleVimKey("<Esc>")
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 1)
+        #expect(view.engine.cacheMetrics.indexedUTF16Length < 70_000)
+
+        // Equal storage lengths do not make old grapheme positions reusable.
+        let replacement = NSTextStorage(string: "e\u{301}x" + tail)
+        view.layoutManager?.replaceTextStorage(replacement)
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 2)
+        #expect(view.engine.cacheMetrics.indexedUTF16Length < 70_000)
+        let indexed = view.engine.cacheMetrics.indexedUTF16Length
+        detached.mutableString.setString("detached")
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 2)
+        #expect(view.engine.cacheMetrics.indexedUTF16Length == indexed)
+        replacement.replaceCharacters(in: NSRange(location: 0, length: 2), with: "é")
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.handleVimKey("l")
+        #expect(view.selectedRange().location == 1)
+        #expect(view.engine.lastReindexedUTF16Length < 70_000)
+    }
+
     @Test func commandSnapshotTracksNativeInsertionUndoAndRedo() throws {
         let (document, controller) = try editor()
         defer { document.close() }

@@ -80,7 +80,8 @@ def main() -> int:
     ]
     if args.large_files:
         large_commands = ["l", "w", "b", "e", "j", "k", "G", "gg", "2dd", "dj", "dk", "dG", "dgg",
-                          "vjy", "vGd", "Vjd", "yyp", "dw", "d$", "cw"]
+                          "vjy", "vGd", "Vjd", "yyp", "dw", "d$", "cw",
+                          "Ggg", "Gkgg", "ggG0", "Gvggy", "ggvGy", "Ggg2w"]
         for text in [("one two three " * 7 + "\n") * 700, "one two three " * 5000]:
             for caret in [0, 16_383, 16_384, 32_767, 32_768, len(text) // 2, len(text) - 1]:
                 cases.extend({"text": text, "caret": caret, "keys": keys} for keys in large_commands)

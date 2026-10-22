@@ -71,6 +71,19 @@ struct VimEngine {
     private var cachedBuffer: Buffer?
     private var cachedText: String?
     private var usesNativeStorage = false
+    struct CacheMetrics {
+        var indexedUTF16Length = 0
+        var cachedBytes = 0
+        var budgetBytes = 0
+        var evictionCount = 0
+        var entryCount = 0
+        var metadataScanMilliseconds = 0.0
+        var graphemeBuildMilliseconds = 0.0
+    }
+    var cacheBudgetBytes = 4 * 1024 * 1024 {
+        didSet { ensureUniqueBuffer(); cachedBuffer?.setBudget(cacheBudgetBytes) }
+    }
+    var cacheMetrics: CacheMetrics { cachedBuffer?.metrics ?? CacheMetrics(budgetBytes: max(0, cacheBudgetBytes)) }
     var lastReindexedUTF16Length: Int { cachedBuffer?.lastReindexedUTF16Length ?? 0 }
 
     mutating func invalidateTextCache() {
@@ -79,16 +92,21 @@ struct VimEngine {
         usesNativeStorage = false
     }
 
+    private mutating func ensureUniqueBuffer() {
+        if !isKnownUniquelyReferenced(&cachedBuffer) { cachedBuffer = cachedBuffer?.copy() }
+    }
+
     /// Native storage notifications supply an exact edit delta. Unchanged chunks
-    /// stay immutable; only the edit's neighborhood is copied and reindexed.
+    /// keep their cached indexes; only nearby lightweight metadata is rescanned.
     mutating func textDidChange(_ source: NSString, editedRange: NSRange, changeInLength: Int) {
         guard usesNativeStorage else { invalidateTextCache(); return }
+        ensureUniqueBuffer()
         cachedBuffer?.update(source, editedRange: editedRange, delta: changeInLength)
     }
 
     private mutating func buffer(for text: String) -> Buffer {
         if !usesNativeStorage, let cachedBuffer, let cachedText, cachedText.isByteIdentical(to: text) { return cachedBuffer }
-        let buffer = Buffer(text)
+        let buffer = Buffer(text, budget: cacheBudgetBytes)
         cachedBuffer = buffer
         cachedText = text
         usesNativeStorage = false
@@ -100,7 +118,7 @@ struct VimEngine {
     mutating func handle(_ key: String, storage: NSString, caret: Int) -> VimEffect {
         guard mode != .insert || key == "<Esc>" else { return .passThrough }
         if !usesNativeStorage || cachedBuffer == nil {
-            cachedBuffer = Buffer(storage)
+            cachedBuffer = Buffer(storage, budget: cacheBudgetBytes)
             cachedText = nil
             usesNativeStorage = true
         }
@@ -125,6 +143,7 @@ struct VimEngine {
     }
 
     private mutating func handle(_ key: String, buffer b: Buffer, caret: Int) -> VimEffect {
+        defer { b.endCommand() }
         if mode.isVisual { return handleVisual(key, buffer: b) }
         guard mode == .normal || key == "<Esc>" else { return .passThrough }
         let position = b.index(at: caret)
@@ -134,7 +153,7 @@ struct VimEngine {
             clearPending()
             desiredColumn = nil
             let line = b.line(at: position)
-            return .move(b.offset(b.normal(wasInsert && position > line.start ? position - 1 : position)))
+            return .move(b.offset(b.normal(wasInsert && position > line.start ? b.previous(position) : position)))
         }
         guard mode == .normal else { return .passThrough }
         let i = b.normal(position)
@@ -166,7 +185,7 @@ struct VimEngine {
             operationHasCount = explicitCount
             return .handled
         case "i": mode = .insert; return .move(b.offset(i))
-        case "a": mode = .insert; return .move(b.offset(min(i + 1, b.line(at: i).end)))
+        case "a": mode = .insert; return .move(b.offset(min(b.next(i), b.line(at: i).end)))
         case "I": mode = .insert; return .move(b.offset(b.firstNonblank(b.lineNumber(at: i))))
         case "A": mode = .insert; return .move(b.offset(b.line(at: i).end))
         case "o", "O":
@@ -176,7 +195,7 @@ struct VimEngine {
             return .edit(range: b.range(at, at), replacement: "\n", caret: b.offset(at) + (key == "o" ? 1 : 0))
         case "x", "X":
             let line = b.line(at: i)
-            return characterOperation("d", b: b, lower: key == "x" ? i : max(line.start, i - count), upper: key == "x" ? min(line.end, i + count) : i)
+            return characterOperation("d", b: b, lower: key == "x" ? i : max(line.start, b.advance(i, by: -count)), upper: key == "x" ? min(line.end, b.advance(i, by: count)) : i)
         case "D", "C":
             let last = min(b.lines.count - 1, b.lineNumber(at: i) + count - 1)
             return characterOperation(key == "D" ? "d" : "c", b: b, lower: i, upper: b.lines[last].end)
@@ -219,7 +238,7 @@ struct VimEngine {
                                            last: max(b.lineNumber(at: anchor), b.lineNumber(at: head)))
                 return op == "y" ? .move(b.offset(head < anchor ? b.normal(head) : b.line(at: anchor).start)) : effect
             }
-            let effect = characterOperation(op, b: b, lower: min(anchor, head), upper: min(b.characterCount, max(anchor, head) + 1))
+            let effect = characterOperation(op, b: b, lower: min(anchor, head), upper: b.next(max(anchor, head)))
             return op == "y" ? .move(b.offset(b.normal(min(anchor, head)))) : effect
         }
         if accumulateCount(key) { return .handled }
@@ -274,10 +293,10 @@ struct VimEngine {
         if mode == .visualLine {
             let first = b.line(at: lower).start
             let last = b.lineNumber(at: upper)
-            let end = last + 1 < b.lines.count ? b.lines[last + 1].start : b.characterCount
+            let end = last + 1 < b.lines.count ? b.lines[last + 1].start : b.length
             range = b.range(first, end)
         } else {
-            range = b.range(lower, min(b.characterCount, upper + 1))
+            range = b.range(lower, b.next(upper))
         }
         return .select(range: range, caret: b.offset(head))
     }
@@ -305,22 +324,22 @@ struct VimEngine {
         var linewise = false
         if key != "j" && key != "k" { desiredColumn = nil }
         switch key {
-        case "h": target = max(line.start, i - total)
-        case "l": target = min(line.end, i + total)
+        case "h": target = max(line.start, b.advance(i, by: -total))
+        case "l": target = min(line.end, b.advance(i, by: total))
         case "0": target = line.start
         case "^": target = b.firstNonblank(lineIndex)
         case "$":
             let last = b.lines[min(b.lines.count - 1, lineIndex + total - 1)]
-            target = visual ? last.end : max(last.start, last.end - 1)
+            target = visual ? last.end : max(last.start, b.previous(last.end))
             inclusive = true
             desiredColumn = Int.max
         case "j", "k":
-            let column = desiredColumn ?? (i - line.start)
+            let column = desiredColumn ?? b.column(at: i)
             desiredColumn = column
             let next = min(b.lines.count - 1, max(0, lineIndex + (key == "j" ? total : -total)))
             if op != nil && next == lineIndex { clearPending(); return .move(b.offset(i)) }
             let destination = b.lines[next]
-            target = destination.start + min(column, max(0, destination.end - destination.start - (visual ? 0 : 1)))
+            target = b.position(in: destination, column: column, visual: visual)
             linewise = true
         case "G", "gg":
             let requested = (explicitCount || operationHasCount) ? total - 1 : (key == "G" ? b.lines.count - 1 : 0)
@@ -347,7 +366,7 @@ struct VimEngine {
             if i <= b.firstNonblank(lineIndex) {
                 return lineOperation(op, b: b, first: lineIndex, last: b.lineNumber(at: target) - 1)
             }
-            target -= 1
+            target = b.previous(target)
         }
         let lower = min(i, target)
         var upper = max(i, target)
@@ -356,7 +375,7 @@ struct VimEngine {
             let effect = lineOperation(op, b: b, first: b.lineNumber(at: lower), last: b.lineNumber(at: upper) - 1)
             return op == "y" ? .move(b.offset(lower)) : effect
         }
-        if inclusive { upper = min(b.characterCount, upper + (upper < b.characterCount && !b.isNewline(upper) ? 1 : 0)) }
+        if inclusive { upper = upper < b.length && !b.isNewline(upper) ? b.next(upper) : upper }
         if op == "d", b.lineNumber(at: upper) > b.lineNumber(at: lower),
            lower <= b.firstNonblank(b.lineNumber(at: lower)), upper >= b.line(at: upper).end {
             return lineOperation(op, b: b, first: b.lineNumber(at: lower), last: b.lineNumber(at: upper))
@@ -385,7 +404,7 @@ struct VimEngine {
         let first = min(max(0, first), b.lines.count - 1)
         let last = min(max(first, last), b.lines.count - 1)
         let start = b.lines[first].start
-        let end = last + 1 < b.lines.count ? b.lines[last + 1].start : b.characterCount
+        let end = last + 1 < b.lines.count ? b.lines[last + 1].start : b.length
         var captured = b.substring(start, end)
         if last == b.lines.count - 1 { captured += "\n" }
         capture(captured, linewise: true)
@@ -396,7 +415,7 @@ struct VimEngine {
             return .edit(range: b.range(start, end), replacement: replacement, caret: b.offset(start))
         }
         // Removing a final unterminated line also removes its preceding separator.
-        let lower = end == b.characterCount && last + 1 == b.lines.count && first > 0 ? start - 1 : start
+        let lower = end == b.length && last + 1 == b.lines.count && first > 0 ? b.previous(start) : start
         let range = b.range(lower, end)
         let caret: Int
         if last + 1 < b.lines.count {
@@ -415,8 +434,8 @@ struct VimEngine {
             let inserted = Buffer(content)
             let firstNonblank = inserted.offset(inserted.firstNonblank(0))
             if after {
-                if line.end < b.characterCount {
-                    let at = line.end + 1
+                if line.end < b.length {
+                    let at = b.next(line.end)
                     return .edit(range: b.range(at, at), replacement: content, caret: b.offset(at) + firstNonblank)
                 }
                 let body = content.hasSuffix("\n") ? String(content.dropLast()) : content
@@ -425,219 +444,402 @@ struct VimEngine {
             let content = content.hasSuffix("\n") ? content : content + "\n"
             return .edit(range: b.range(line.start, line.start), replacement: content, caret: b.offset(line.start) + firstNonblank)
         }
-        let at = after ? min(i + 1, b.line(at: i).end) : i
+        let at = after ? min(b.next(i), b.line(at: i).end) : i
         let inserted = Buffer(content)
-        let lastOffset = inserted.offset(max(0, inserted.characterCount - 1))
+        let lastOffset = inserted.previous(inserted.length)
         return .edit(range: b.range(at, at), replacement: content, caret: b.offset(at) + lastOffset)
     }
 
-    /// Immutable text chunks with relative grapheme/line indexes. The small
-    /// prefix tables are recomputed after edits; character data is not rescanned.
-    private struct Buffer {
-        typealias Line = Fragment.Line
+    /// Positions are native UTF-16 offsets. Only line metadata is collected up
+    /// front; visiting a chunk creates its disposable sparse grapheme index.
+    /// Native mutable storage remains the sole editable text owner.
+    private final class Buffer {
+        struct Line { let start: Int; let end: Int }
+        private final class Chunk {
+            let length: Int
+            let lines: [Line]
+            var fragment: Fragment?
+            var bytes = 0
+            var access: UInt64 = 0
+            init(length: Int, lines: [Line]) { self.length = length; self.lines = lines }
+        }
         private static let targetSize = 16_384
-        private static let separators = CharacterSet(charactersIn: "\r\n")
-        private var fragments: [Fragment]
-        private var characterStarts: [Int] = []
-        private var utf16Starts: [Int] = []
+        private var source: NSString
+        private var chunks: [Chunk] = []
+        private var starts: [Int] = []
         private var lineStarts: [Int] = []
-        private(set) var characterCount = 0
-        private var utf16Count = 0
+        private(set) var length = 0
         private var lineCount = 0
+        private var clock: UInt64 = 0
+        // An oversized logical line may temporarily exceed the cache budget,
+        // but its snapshot/index is released at the end of the command.
+        private var temporary: (chunk: Chunk, fragment: Fragment)?
+        private(set) var metrics: CacheMetrics
         private(set) var lastReindexedUTF16Length = 0
 
-        init(_ text: String) { self.init(text as NSString) }
-        init(_ source: NSString) {
-            fragments = Self.fragments(source, range: NSRange(location: 0, length: source.length))
-            lastReindexedUTF16Length = source.length
+        convenience init(_ text: String, budget: Int = 4 * 1024 * 1024) { self.init(text as NSString, budget: budget) }
+        init(_ source: NSString, budget: Int = 4 * 1024 * 1024) {
+            self.source = source
+            metrics = CacheMetrics(budgetBytes: max(0, budget))
+            chunks = scan(NSRange(location: 0, length: source.length))
             rebuildTotals()
         }
 
-        private static func fragments(_ source: NSString, range: NSRange) -> [Fragment] {
-            var result: [Fragment] = []
-            var start = range.location
+        /// Bounded UTF-16 reads avoid a whole-document Swift conversion. Only
+        /// CR, LF and CRLF are Vim lines; the gutter intentionally has broader
+        /// Foundation line-separator semantics.
+        private func scan(_ range: NSRange) -> [Chunk] {
+            let began = DispatchTime.now().uptimeNanoseconds
+            defer { metrics.metadataScanMilliseconds += Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000 }
+            lastReindexedUTF16Length = range.length
+            var result: [Chunk] = []
+            var lines: [Line] = []
+            var chunkStart = range.location
+            var lineStart = chunkStart
             let limit = NSMaxRange(range)
-            while start < limit {
-                var end = min(limit, start + targetSize)
-                if end < limit {
-                    // Chunks end at hard Unicode grapheme boundaries. Keep a
-                    // whole logical line, including CRLF, in the same chunk.
-                    let separator = source.rangeOfCharacter(from: separators, range: NSRange(location: end, length: limit - end))
-                    end = separator.location == NSNotFound ? limit : NSMaxRange(separator)
-                    if end < limit && source.character(at: end - 1) == 13 && source.character(at: end) == 10 { end += 1 }
+            var pendingCR: Int?
+            func separator(_ start: Int, _ end: Int) {
+                lines.append(Line(start: lineStart - chunkStart, end: start - chunkStart))
+                lineStart = end
+                if end - chunkStart >= Self.targetSize {
+                    // Every chunk includes a final (possibly empty) line.
+                    lines.append(Line(start: end - chunkStart, end: end - chunkStart))
+                    result.append(Chunk(length: end - chunkStart, lines: lines))
+                    chunkStart = end
+                    lines = []
                 }
-                result.append(Fragment(source.substring(with: NSRange(location: start, length: end - start))))
-                start = end
             }
-            return result.isEmpty ? [Fragment("")] : result
-        }
-
-        private mutating func rebuildTotals() {
-            characterStarts.removeAll(keepingCapacity: true)
-            utf16Starts.removeAll(keepingCapacity: true)
-            lineStarts.removeAll(keepingCapacity: true)
-            characterCount = 0
-            utf16Count = 0
-            lineCount = 0
-            for (i, fragment) in fragments.enumerated() {
-                characterStarts.append(characterCount)
-                utf16Starts.append(utf16Count)
-                lineStarts.append(lineCount)
-                characterCount += fragment.characterCount
-                utf16Count += fragment.utf16Count
-                lineCount += fragment.lines.count - (i + 1 < fragments.count ? 1 : 0)
+            var units = [unichar](repeating: 0, count: min(32_768, max(1, range.length)))
+            var blockStart = range.location
+            while blockStart < limit {
+                let count = min(units.count, limit - blockStart)
+                source.getCharacters(&units, range: NSRange(location: blockStart, length: count))
+                for index in 0..<count {
+                    let at = blockStart + index
+                    let unit = units[index]
+                    if let cr = pendingCR {
+                        pendingCR = nil
+                        separator(cr, unit == 10 ? at + 1 : at)
+                        if unit == 10 { continue }
+                    }
+                    if unit == 13 { pendingCR = at }
+                    else if unit == 10 { separator(at, at + 1) }
+                }
+                blockStart += count
             }
-        }
-
-        mutating func update(_ source: NSString, editedRange: NSRange, delta: Int) {
-            let oldEnd = NSMaxRange(editedRange) - delta
-            guard editedRange.location >= 0, oldEnd >= editedRange.location, oldEnd <= utf16Count,
-                  source.length == utf16Count + delta else {
-                self = Buffer(source)
-                return
-            }
-            let first = max(0, chunk(at: editedRange.location, starts: utf16Starts) - 1)
-            let last = min(fragments.count - 1, chunk(at: oldEnd, starts: utf16Starts) + 1)
-            let start = utf16Starts[first]
-            let end = (last + 1 < fragments.count ? utf16Starts[last + 1] : utf16Count) + delta
-            lastReindexedUTF16Length = end - start
-            let replacement = Self.fragments(source, range: NSRange(location: start, length: end - start))
-            fragments.replaceSubrange(first...last, with: replacement)
-            rebuildTotals()
-        }
-
-        private func chunk(at position: Int, starts: [Int]) -> Int {
-            max(0, starts.partitionIndex { $0 <= position } - 1)
-        }
-        func offset(_ position: Int) -> Int {
-            let position = min(max(0, position), characterCount)
-            let i = chunk(at: position, starts: characterStarts)
-            return utf16Starts[i] + fragments[i].offset(position - characterStarts[i])
-        }
-        func index(at offset: Int) -> Int {
-            let offset = min(max(0, offset), utf16Count)
-            let i = chunk(at: offset, starts: utf16Starts)
-            return characterStarts[i] + fragments[i].index(at: offset - utf16Starts[i])
-        }
-        func lineNumber(at position: Int) -> Int {
-            let i = chunk(at: position, starts: characterStarts)
-            return lineStarts[i] + fragments[i].lineNumber(at: position - characterStarts[i])
-        }
-        struct Lines: RandomAccessCollection {
-            typealias Index = Int
-            let fragments: [Fragment]
-            let characterStarts: [Int]
-            let lineStarts: [Int]
-            let endIndex: Int
-            var startIndex: Int { 0 }
-            subscript(position: Int) -> Line {
-                let i = Swift.max(0, lineStarts.partitionIndex { $0 <= position } - 1)
-                let line = fragments[i].lines[position - lineStarts[i]]
-                return Line(start: characterStarts[i] + line.start, end: characterStarts[i] + line.end)
-            }
-        }
-        var lines: Lines { Lines(fragments: fragments, characterStarts: characterStarts, lineStarts: lineStarts, endIndex: lineCount) }
-        func line(at position: Int) -> Line { lines[lineNumber(at: position)] }
-        func normal(_ position: Int) -> Int {
-            let position = min(max(0, position), characterCount)
-            let line = line(at: position)
-            return min(position, max(line.start, line.end - 1))
-        }
-        func firstNonblank(_ line: Int) -> Int {
-            let i = chunk(at: line, starts: lineStarts)
-            return characterStarts[i] + fragments[i].firstNonblank(line - lineStarts[i])
-        }
-        private func character(_ position: Int) -> Character {
-            let i = chunk(at: position, starts: characterStarts)
-            return fragments[i].character(position - characterStarts[i])
-        }
-        func isNewline(_ position: Int) -> Bool {
-            guard position < characterCount else { return false }
-            let character = character(position)
-            return character == "\n" || character == "\r\n" || character == "\r"
-        }
-        func category(_ position: Int, big: Bool) -> Int {
-            guard position < characterCount else { return 0 }
-            let c = character(position)
-            if c.isWhitespace { return 0 }
-            return big || c.isLetter || c.isNumber || c == "_" ? 1 : 2
-        }
-        func range(_ lower: Int, _ upper: Int) -> NSRange { NSRange(location: offset(lower), length: offset(upper) - offset(lower)) }
-        func substring(_ lower: Int, _ upper: Int) -> String {
-            guard upper > lower else { return "" }
-            let first = chunk(at: lower, starts: characterStarts)
-            let last = chunk(at: upper - 1, starts: characterStarts)
-            var result = ""
-            for i in first...last {
-                result += fragments[i].substring(max(0, lower - characterStarts[i]), min(fragments[i].characterCount, upper - characterStarts[i]))
+            if let cr = pendingCR { separator(cr, limit) }
+            if chunkStart < limit || result.isEmpty {
+                lines.append(Line(start: lineStart - chunkStart, end: limit - chunkStart))
+                result.append(Chunk(length: limit - chunkStart, lines: lines))
             }
             return result
         }
 
+        private init(copying other: Buffer) {
+            source = other.source
+            metrics = other.metrics
+            starts = other.starts
+            lineStarts = other.lineStarts
+            length = other.length
+            lineCount = other.lineCount
+            clock = other.clock
+            lastReindexedUTF16Length = other.lastReindexedUTF16Length
+            chunks = other.chunks.map { old in
+                let chunk = Chunk(length: old.length, lines: old.lines)
+                chunk.fragment = old.fragment
+                chunk.bytes = old.bytes
+                chunk.access = old.access
+                return chunk
+            }
+        }
+        func copy() -> Buffer { Buffer(copying: self) }
+
+        private func rebuildTotals() {
+            starts.removeAll(keepingCapacity: true)
+            lineStarts.removeAll(keepingCapacity: true)
+            length = 0
+            lineCount = 0
+            for (i, chunk) in chunks.enumerated() {
+                starts.append(length)
+                lineStarts.append(lineCount)
+                length += chunk.length
+                lineCount += chunk.lines.count - (i + 1 < chunks.count ? 1 : 0)
+            }
+        }
+
+        func update(_ source: NSString, editedRange: NSRange, delta: Int) {
+            self.source = source
+            temporary = nil
+            let oldEnd = NSMaxRange(editedRange) - delta
+            guard editedRange.location >= 0, oldEnd >= editedRange.location, oldEnd <= length,
+                  source.length == length + delta else {
+                chunks = scan(NSRange(location: 0, length: source.length))
+                metrics.cachedBytes = 0
+                metrics.entryCount = 0
+                rebuildTotals()
+                return
+            }
+            let first = max(0, chunk(at: editedRange.location) - 1)
+            let last = min(chunks.count - 1, chunk(at: oldEnd) + 1)
+            let start = starts[first]
+            let end = (last + 1 < chunks.count ? starts[last + 1] : length) + delta
+            for i in first...last { discard(chunks[i], eviction: false) }
+            let replacement = scan(NSRange(location: start, length: end - start))
+            chunks.replaceSubrange(first...last, with: replacement)
+            rebuildTotals()
+        }
+
+        func endCommand() { temporary = nil }
+        func setBudget(_ bytes: Int) {
+            metrics.budgetBytes = max(0, bytes)
+            trim(to: metrics.budgetBytes)
+        }
+        private func discard(_ chunk: Chunk, eviction: Bool) {
+            guard chunk.fragment != nil else { return }
+            metrics.cachedBytes -= chunk.bytes
+            metrics.entryCount -= 1
+            if eviction { metrics.evictionCount += 1 }
+            chunk.fragment = nil
+            chunk.bytes = 0
+        }
+        private func trim(to maximum: Int) {
+            while metrics.cachedBytes > maximum,
+                  let oldest = chunks.filter({ $0.fragment != nil }).min(by: { $0.access < $1.access }) {
+                discard(oldest, eviction: true)
+            }
+        }
+        private func fragment(_ i: Int) -> Fragment {
+            let chunk = chunks[i]
+            clock &+= 1
+            chunk.access = clock
+            if let fragment = chunk.fragment { return fragment }
+            if let temporary, temporary.chunk === chunk { return temporary.fragment }
+            let began = DispatchTime.now().uptimeNanoseconds
+            let fragment = Fragment(source.substring(with: NSRange(location: starts[i], length: chunk.length)))
+            metrics.graphemeBuildMilliseconds += Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000
+            metrics.indexedUTF16Length += chunk.length
+            // Includes owned UTF-8 text, conservative checkpoint allocation,
+            // and object/array overhead, not merely the logical checkpoint count.
+            let bytes = fragment.estimatedBytes
+            if bytes <= metrics.budgetBytes {
+                trim(to: metrics.budgetBytes - bytes)
+                chunk.fragment = fragment
+                chunk.bytes = bytes
+                metrics.cachedBytes += bytes
+                metrics.entryCount += 1
+            } else {
+                temporary = (chunk, fragment)
+            }
+            return fragment
+        }
+        // A giant logical line must not build and discard an oversized Swift
+        // snapshot on every key. Foundation resolves composed-character ranges
+        // against the complete native string, including unbounded RI/combining
+        // context. This fallback retains no character index or text copy.
+        private func direct(_ i: Int) -> Bool { chunks[i].length > Self.targetSize * 4 }
+        private func composed(at position: Int) -> NSRange { source.rangeOfComposedCharacterSequence(at: position) }
+        private func chunk(at position: Int) -> Int { max(0, starts.partitionIndex { $0 <= position } - 1) }
+        func offset(_ position: Int) -> Int { min(max(0, position), length) }
+        func index(at offset: Int) -> Int {
+            let offset = self.offset(offset)
+            if offset == length { return length }
+            let i = chunk(at: offset)
+            if direct(i) { return composed(at: offset).location }
+            let f = fragment(i)
+            return starts[i] + f.offset(f.index(at: offset - starts[i]))
+        }
+        func advance(_ position: Int, by count: Int) -> Int {
+            guard count != 0 else { return position }
+            var at = position
+            var remaining = count
+            while remaining != 0 && (remaining > 0 ? at < length : at > 0) {
+                let i = chunk(at: remaining < 0 ? at - 1 : at)
+                if direct(i) {
+                    at = remaining > 0 ? NSMaxRange(composed(at: at)) : composed(at: at - 1).location
+                    remaining += remaining > 0 ? -1 : 1
+                    continue
+                }
+                let f = fragment(i)
+                let local = f.index(at: at - starts[i])
+                let next = min(f.characterCount, max(0, local + remaining))
+                remaining -= next - local
+                at = starts[i] + f.offset(next)
+            }
+            return at
+        }
+        func next(_ position: Int) -> Int { advance(position, by: 1) }
+        func previous(_ position: Int) -> Int { advance(position, by: -1) }
+        func column(at position: Int) -> Int {
+            let i = chunk(at: position)
+            if direct(i) {
+                var at = line(at: position).start
+                var column = 0
+                while at < position { at = NSMaxRange(composed(at: at)); column += 1 }
+                return column
+            }
+            let f = fragment(i)
+            return f.index(at: position - starts[i]) - f.index(at: line(at: position).start - starts[i])
+        }
+        func position(in line: Line, column: Int, visual: Bool) -> Int {
+            let end = visual ? line.end : max(line.start, previous(line.end))
+            if column == Int.max { return end }
+            let i = chunk(at: line.start)
+            if direct(i) {
+                var at = line.start
+                var remaining = column
+                while remaining > 0 && at < end { at = NSMaxRange(composed(at: at)); remaining -= 1 }
+                return min(at, end)
+            }
+            let f = fragment(i)
+            let first = f.index(at: line.start - starts[i])
+            let last = f.index(at: end - starts[i])
+            return starts[i] + f.offset(min(last, first + column))
+        }
+        func lineNumber(at position: Int) -> Int {
+            let i = chunk(at: position)
+            return lineStarts[i] + max(0, chunks[i].lines.partitionIndex { $0.start <= position - starts[i] } - 1)
+        }
+        struct Lines: RandomAccessCollection {
+            typealias Index = Int
+            fileprivate let buffer: Buffer
+            var startIndex: Int { 0 }
+            var endIndex: Int { buffer.lineCount }
+            subscript(position: Int) -> Line {
+                let i = Swift.max(0, buffer.lineStarts.partitionIndex { $0 <= position } - 1)
+                let line = buffer.chunks[i].lines[position - buffer.lineStarts[i]]
+                return Line(start: buffer.starts[i] + line.start, end: buffer.starts[i] + line.end)
+            }
+        }
+        var lines: Lines { Lines(buffer: self) }
+        func line(at position: Int) -> Line { lines[lineNumber(at: position)] }
+        func normal(_ position: Int) -> Int {
+            let position = offset(position)
+            let line = line(at: position)
+            return position < line.end ? position : max(line.start, previous(line.end))
+        }
+        func firstNonblank(_ number: Int) -> Int {
+            let line = lines[number]
+            var i = line.start
+            while i < line.end {
+                let c = character(i)
+                if c != " " && c != "\t" { break }
+                i = next(i)
+            }
+            return i == line.end ? line.start : i
+        }
+        private func character(_ position: Int) -> Character {
+            let i = chunk(at: position)
+            if direct(i) { return source.substring(with: composed(at: position)).first! }
+            let f = fragment(i)
+            return f.character(f.index(at: position - starts[i]))
+        }
+        func isNewline(_ position: Int) -> Bool {
+            guard position < length else { return false }
+            let unit = source.character(at: position)
+            return unit == 10 || unit == 13
+        }
+        func category(_ position: Int, big: Bool) -> Int {
+            guard position < length else { return 0 }
+            let c = character(position)
+            if c.isWhitespace { return 0 }
+            return big || c.isLetter || c.isNumber || c == "_" ? 1 : 2
+        }
+        func range(_ lower: Int, _ upper: Int) -> NSRange { NSRange(location: lower, length: upper - lower) }
+        func substring(_ lower: Int, _ upper: Int) -> String { source.substring(with: range(lower, upper)) }
+
         func wordMotion(_ motion: String, from start: Int, count: Int, big: Bool, operatorWord: Bool = false, initialWordEnd: Bool = false) -> Int {
+            // Keep a String cursor for sequential scans so long words do not
+            // repeatedly seek from sparse checkpoints.
             var cursorPosition = -1
-            var currentChunk = chunk(at: start, starts: characterStarts)
-            var text = fragments[currentChunk].text
+            var cursorChunk = -1
+            var text = ""
             var cursor = text.startIndex
-            func value(at position: Int) -> Character {
-                let base = characterStarts[currentChunk]
-                if position < base || position >= base + fragments[currentChunk].characterCount {
-                    currentChunk = chunk(at: position, starts: characterStarts)
-                    text = fragments[currentChunk].text
+            func value(_ position: Int) -> Character {
+                let i = chunk(at: position)
+                if direct(i) { return character(position) }
+                if i != cursorChunk {
+                    cursorChunk = i
+                    text = fragment(i).text
                     cursorPosition = -1
                 }
-                if cursorPosition >= 0 && position == cursorPosition + 1 {
-                    text.formIndex(after: &cursor)
-                } else if position == cursorPosition - 1 {
-                    text.formIndex(before: &cursor)
-                } else if position != cursorPosition {
-                    cursor = fragments[currentChunk].stringIndex(position - characterStarts[currentChunk])
+                if cursorPosition != position {
+                    let f = fragment(i)
+                    cursor = f.stringIndex(f.index(at: position - starts[i]))
+                    cursorPosition = position
                 }
-                cursorPosition = position
                 return text[cursor]
             }
-            func kind(at position: Int) -> Int {
-                guard position < characterCount else { return 0 }
-                let character = value(at: position)
-                if character.isWhitespace { return 0 }
-                if big { return 1 }
-                return character.isLetter || character.isNumber || character == "_" ? 1 : 2
+            func nextPosition(_ position: Int) -> Int {
+                guard position < length else { return length }
+                if direct(chunk(at: position)) { return NSMaxRange(composed(at: position)) }
+                _ = value(position)
+                let next = text.index(after: cursor)
+                let offset = position + text[cursor..<next].utf16.count
+                cursor = next
+                cursorPosition = offset
+                return offset
             }
-            func newline(at position: Int) -> Bool {
-                guard position < characterCount else { return false }
-                let character = value(at: position)
-                return character == "\n" || character == "\r\n" || character == "\r"
+            func previousPosition(_ position: Int) -> Int {
+                guard position > 0 else { return 0 }
+                let i = chunk(at: position - 1)
+                if direct(i) { return composed(at: position - 1).location }
+                if i != cursorChunk { cursorChunk = i; text = fragment(i).text; cursorPosition = -1 }
+                if cursorPosition != position {
+                    let f = fragment(i)
+                    cursor = f.stringIndex(f.index(at: position - starts[i]))
+                }
+                let before = text.index(before: cursor)
+                let previous = position - text[before..<cursor].utf16.count
+                cursor = before
+                cursorPosition = previous
+                return previous
+            }
+            func kind(_ position: Int) -> Int {
+                guard position < length else { return 0 }
+                let c = value(position)
+                if c.isWhitespace { return 0 }
+                return big || c.isLetter || c.isNumber || c == "_" ? 1 : 2
             }
             var i = start
             for step in 0..<count {
                 switch motion {
                 case "w":
-                    if i >= characterCount { return i }
-                    let category = kind(at: i)
-                    if category == 0 { i += 1 }
-                    else { while i < characterCount && kind(at: i) == category { i += 1 } }
-                    while i < characterCount && kind(at: i) == 0 {
-                        if operatorWord && step == count - 1 && newline(at: i) { return i }
-                        if newline(at: i) && line(at: i).start == i { break }
-                        i += 1
+                    if i >= length { return i }
+                    let category = kind(i)
+                    if category == 0 { i = nextPosition(i) }
+                    else { while i < length && kind(i) == category { i = nextPosition(i) } }
+                    while i < length && kind(i) == 0 {
+                        if operatorWord && step == count - 1 && isNewline(i) { return i }
+                        if isNewline(i) && line(at: i).start == i { break }
+                        i = nextPosition(i)
                     }
                 case "b":
                     if i == 0 { return 0 }
-                    i -= 1
-                    while i > 0 && kind(at: i) == 0 {
-                        if newline(at: i) && line(at: i).start == i { break }
-                        i -= 1
+                    i = previousPosition(i)
+                    while i > 0 && kind(i) == 0 {
+                        if isNewline(i) && line(at: i).start == i { break }
+                        i = previousPosition(i)
                     }
-                    let category = kind(at: i)
-                    if category != 0 { while i > 0 && kind(at: i - 1) == category { i -= 1 } }
+                    let category = kind(i)
+                    if category != 0 {
+                        while i > 0 {
+                            let before = previousPosition(i)
+                            if kind(before) != category { break }
+                            i = before
+                        }
+                    }
                 case "e":
-                    if i >= characterCount { return i }
-                    if i == characterCount - 1 { return newline(at: i) ? characterCount : i }
-                    if !(initialWordEnd && step == 0) { i += 1 }
-                    while i < characterCount && kind(at: i) == 0 { i += 1 }
-                    if i == characterCount { return i }
-                    let category = kind(at: i)
-                    while i < characterCount - 1 && kind(at: i + 1) == category { i += 1 }
+                    if i >= length { return i }
+                    if nextPosition(i) == length { return isNewline(i) ? length : i }
+                    if !(initialWordEnd && step == 0) { i = nextPosition(i) }
+                    while i < length && kind(i) == 0 { i = nextPosition(i) }
+                    if i == length { return i }
+                    let category = kind(i)
+                    while true {
+                        let next = nextPosition(i)
+                        if next >= length || kind(next) != category { break }
+                        i = next
+                    }
                 default: break
                 }
             }
@@ -646,7 +848,6 @@ struct VimEngine {
     }
 
     private struct Fragment {
-        struct Line { let start: Int; let end: Int }
         let text: String
         // A checkpoint every 32 graphemes replaces the old Character + Int per
         // grapheme arrays. String slices share the snapshot; lookups scan at most
@@ -655,15 +856,12 @@ struct VimEngine {
         let characterCount: Int
         let utf16Count: Int
         let checkpoints: [(index: String.Index, offset: Int)]
-        let lines: [Line]
 
         init(_ text: String) {
             var text = text
             text.makeContiguousUTF8()
             self.text = text
             var checkpoints: [(index: String.Index, offset: Int)] = []
-            var lines: [Line] = []
-            var start = 0
             var count = 0
             var offset = 0
             text.utf8.withContiguousStorageIfAvailable { bytes in
@@ -678,10 +876,6 @@ struct VimEngine {
                     // marks, emoji and the complete Unicode grapheme rules.
                     let ascii = value < 128 && (byte + 1 == bytes.count || bytes[byte + 1] < 128)
                         && !(value == 13 && byte + 1 < bytes.count && bytes[byte + 1] == 10)
-                    if value == 10 || value == 13 {
-                        lines.append(Line(start: start, end: count))
-                        start = count + 1
-                    }
                     if ascii {
                         byte += 1
                         offset += 1
@@ -701,12 +895,12 @@ struct VimEngine {
                 }
             }
             if count.isMultiple(of: Self.stride) { checkpoints.append((text.endIndex, offset)) }
-            lines.append(Line(start: start, end: count))
             self.characterCount = count
             self.utf16Count = offset
             self.checkpoints = checkpoints
-            self.lines = lines
         }
+
+        var estimatedBytes: Int { text.utf8.count + checkpoints.count * MemoryLayout<(String.Index, Int)>.stride * 2 + 256 }
 
         func stringIndex(_ position: Int) -> String.Index {
             let position = min(max(0, position), characterCount)
@@ -733,17 +927,5 @@ struct VimEngine {
             }
             return position
         }
-        func lineNumber(at i: Int) -> Int { max(0, lines.partitionIndex { $0.start <= i } - 1) }
-        func firstNonblank(_ index: Int) -> Int {
-            let line = lines[index]
-            var i = line.start
-            var cursor = stringIndex(i)
-            while i < line.end && (text[cursor] == " " || text[cursor] == "\t") {
-                i += 1
-                text.formIndex(after: &cursor)
-            }
-            return i == line.end ? line.start : i
-        }
-        func substring(_ lower: Int, _ upper: Int) -> String { String(text[stringIndex(lower)..<stringIndex(upper)]) }
     }
 }

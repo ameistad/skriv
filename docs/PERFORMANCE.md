@@ -669,9 +669,9 @@ python3 scripts/check-vim-conformance.py --large-files
 Raw reports: [before](../build/benchmarks/incremental-before.json),
 [after](../build/benchmarks/incremental-after.json).
 
-## Planned: reduce first-command indexing
+## Plan: reduce first-command indexing
 
-Status: **not implemented**. The incremental index above still eagerly indexes
+Status: **implemented in the follow-up below**. The following records the original plan. The incremental index above still eagerly indexes
 all graphemes on its first use. The 2.119-second first native command measurement
 also includes native selection/layout work; it is not an isolated index timer.
 
@@ -704,3 +704,173 @@ bound character-cache growth during traversal; and preserve correctness.
 Profile enormous single-line native layout separately before selecting that
 follow-up's implementation. Begin with measurement and the UTF-16 refactor,
 then add lazy caching after existing behavior passes unchanged.
+
+
+## Lazy character indexing — implementation
+
+Document positions in the Vim engine now use native UTF-16 offsets rather than
+whole-document grapheme ordinals. Initial construction scans UTF-16 in bounded
+blocks to collect CR/LF/CRLF line and chunk metadata. A command builds a sparse
+Unicode grapheme index only for the chunks it visits. `gg`, `G` and line-number
+jumps no longer index the characters in preceding chunks. Native mutable text
+storage remains authoritative; unvisited chunks do not own text snapshots.
+
+A least-recently-used cache limits retained character indexes to a 4 MiB
+accounting budget per engine. Accounting includes copied UTF-8 text, checkpoint
+capacity allowance and per-entry overhead; it is not a bound on total process
+RSS, native text storage, line metadata or temporary allocations. Oversized
+logical chunks use Foundation composed-character navigation directly against
+native storage, avoiding a retained whole-line copy. Small edits rescan nearby
+line metadata, discard affected character entries, and preserve unaffected
+entries without populating previously unused indexes. Cache changes preserve
+VimEngine value semantics when an engine is copied. The gutter keeps its own
+incremental index because its Foundation line-separator rules differ from Vim's.
+
+### Measurement boundaries
+
+The large-file runner now has three independent fresh-process profiles:
+
+- `engine`: file loading, first engine command and an end-of-file `G` jump, with
+  no text view or native layout manager. Optional diagnostics separately report
+  metadata scanning, grapheme construction, indexed units and retained cache
+  estimates. Diagnostic totals are sampled after both commands.
+- `offscreen`: the existing native text view, gutter, search, edit and save
+  workload. This keeps the previous measurement boundary for comparisons.
+- `visible`: the actual production `DocumentWindowController` with default
+  `EditorSettings`, including its font, wrapping, text container and view
+  hierarchy. The existing launch-benchmark flag supplies stable window geometry
+  and disables preference writes. It measures controller construction, first
+  display and the first Vim command separately. Display includes a main-loop
+  turn and drawing submission, not hardware input-to-pixel latency. A process
+  deadline is recorded as a timeout rather than a successful timing sample.
+
+All fixtures are freshly generated UTF-8 files, read from the filesystem with
+warm filesystem caches. Native edit/save runs verify exact SHA-256 round trips;
+completed engine and visible profiles verify command results. These are file-operation
+measurements inside already initialized processes, not complete application
+startup measurements. Each profile has its own memory baseline and should not
+be combined with another profile to infer peak RSS.
+
+### Comparable editor measurement
+
+`scripts/benchmark-neovim-large-files.py` opens the exact same four fixture byte
+sequences in fresh Neovim 0.12.5 processes, with no user configuration, plugins,
+swap, persistent undo or highlighting; wrapping is disabled. File loading and
+navigation are timed inside Neovim after startup. Peak RSS comes from macOS
+`time -l`. Three runs verify expected line counts and cursor positions. The
+median empty-process launch-through-exit is 11.97 ms, reported separately rather
+than subtracted from file operations.
+
+| Neovim headless, median | Load | First `l` | Peak RSS |
+| --- | ---: | ---: | ---: |
+| 75 MB Unicode, 1 million lines | 100.48 ms | 0.020 ms | 90.13 MiB |
+| 10 MB single ASCII line | 17.49 ms | 0.238 ms | 76.67 MiB |
+| 2 MB, 1 million short lines | 22.74 ms | 0.021 ms | 17.20 MiB |
+
+These results show that multi-second character indexing is not inherent to the
+fixture. They do **not** compare GUI opening-to-interactive latency: headless
+Neovim performs no window layout or drawing, and its file/line model differs
+from NSTextStorage. VS Code and Sublime Text are installed, but this run does
+not claim GUI comparison timings because no equivalent instrumented readiness
+boundary was established. The production Skriv visible profile below separately
+checks whether command improvements translate into opening responsiveness.
+
+
+### Repeated before/after results
+
+Apple M3 Pro, macOS 26.5, Swift 6.3.3, release optimization and whole-module
+optimization. Three fresh processes per fixture/profile/build. The before source
+is commit `ce8b46a`; both builds use the identical expanded benchmark fixture.
+Source and fixture hashes are recorded, and the after source hashes were checked
+against the final working tree. All completed offscreen input/output hashes match.
+
+| Workload | Pure engine first command, before → after | Native offscreen first command, before → after | Full offscreen peak RSS, before → after |
+| --- | ---: | ---: | ---: |
+| 7.5 MB Unicode | 192.23 → 6.66 ms | 204.33 → 15.17 ms | 115.53 → 103.52 MiB |
+| 75 MB Unicode | 1,924.82 → 65.46 ms | 1,979.95 → 70.21 ms | 570.81 → 452.59 MiB |
+| 10 MB single ASCII line | 58.27 → 10.80 ms | 3,152.53 → 3,042.21 ms | 445.16 → 421.09 MiB |
+| 2 MB, 1 million short lines | 34.18 → 4.82 ms | 46.54 → 16.68 ms | 106.17 → 102.41 MiB |
+
+These are medians. The 75 MB first native command improves **28.2×**, exceeding
+the proposed 5× target for the existing native benchmark. The pure engine's
+resident memory immediately after its first command falls from 381.48 to
+263.19 MiB. Native offscreen resident memory at that point falls from 340.59 to
+301.92 MiB; peak RSS across its full search/edit/save workload falls by 118.22
+MiB. Retained/index-only measurements and full-workload peaks describe different
+process stages; RSS also reflects allocator and OS residency decisions.
+
+For the 75 MB engine profile, metadata scanning takes 64.55 ms and grapheme
+construction takes 0.817 ms cumulatively through first command and `G`. Only
+26,040 UTF-16 units are character-indexed across two chunks, retaining 55,564
+accounted bytes. The cold distant jump costs 0.320 ms. The 10 MB single-line
+fixture retains no character-cache entries and uses native boundary navigation;
+its remaining native command cost is dominated by work outside the Vim engine.
+
+| 75 MB complete native cycle, median | Before | After |
+| --- | ---: | ---: |
+| Same-length replacement + motion | 3.078 ms | 2.434 ms |
+| Insert one character + motion | 3.612 ms | 2.964 ms |
+| Delete one character + motion | 3.575 ms | 2.954 ms |
+
+Replacement medians combine nine samples per build; insertion and deletion
+combine six each. The previous small-edit responsiveness is preserved. The
+10 MB single-line replacement cycle remains expensive: 1,455.86 → 1,404.61 ms.
+Native layout remains a separate problem, despite the cheaper command engine.
+
+
+### Visible opening remains a separate bottleneck
+
+One diagnostic run per fixture/build uses the actual production controller.
+These single observations are not the three-run medians above:
+
+| Visible workload | Controller construction, before → after | First display, before → after | First Vim command, before → after |
+| --- | ---: | ---: | ---: |
+| 7.5 MB Unicode | 31.14 → 31.69 s | 139 → 71 ms | 201.49 → 12.24 ms |
+| 75 MB Unicode | Entire process exceeded 45 s on both builds | Not reached/reported | Not reached/reported |
+| 10 MB single ASCII line | 2.58 → 2.62 s | 2.86 → 2.89 s | 59.26 → 15.92 ms |
+| 2 MB, 1 million short lines | 21.08 → 21.22 s | 51 → 48 ms | 38.53 → 9.85 ms |
+
+The 75 MB after-process sample is inside `DocumentWindowController.init`, where
+setting the text view's background color enters AppKit glyph generation and
+layout-hole filling. This occurs before any Vim index is created. The timeout
+is a whole-process deadline, not a precise controller-construction duration;
+no 75 MB visible first-command measurement is claimed. Sampling that timed-out
+process does not affect the completed timing rows.
+
+Thus the lazy-indexing target is met for command work, but **large-file GUI
+opening is not fixed**. Native view configuration/layout dominates the visible
+opening path even for multiline files. A follow-up should profile the order of
+presentation-attribute changes and layout invalidation, plus viewport-only
+layout, against these production-controller measurements. This change does not
+alter native layout settings or claim a visible startup speedup.
+
+Validation: all **115 Swift tests** and **2,522 Neovim differential cases** pass.
+Coverage includes lazy cold jumps, byte-budget eviction/revisits, edits in
+uncached chunks, Unicode and CRLF boundaries, copied-engine isolation, native
+Insert/undo/redo/storage replacement, and oversized-line composed-character
+navigation against a Swift Character oracle. The release app builds and passes
+strict code-signature verification. Benchmark scripts compile with Python and
+`git diff --check` passes.
+
+```sh
+mkdir -p build/lazy-before
+git archive ce8b46a Sources | tar -x -C build/lazy-before
+python3 scripts/benchmark-large-files.py --source-root build/lazy-before \
+  --profiles offscreen engine --runs 3 --output build/benchmarks/lazy-before.json
+python3 scripts/benchmark-large-files.py --profiles offscreen engine \
+  --diagnostics --runs 3 --output build/benchmarks/lazy-after.json
+python3 scripts/benchmark-large-files.py --source-root build/lazy-before \
+  --profiles visible --runs 1 --timeout 45 --output build/benchmarks/lazy-visible-before.json
+python3 scripts/benchmark-large-files.py --profiles visible --runs 1 \
+  --timeout 45 --output build/benchmarks/lazy-visible-after.json
+python3 scripts/benchmark-neovim-large-files.py --runs 3 \
+  --output build/benchmarks/lazy-neovim.json
+```
+
+Raw reports: [before](../build/benchmarks/lazy-before.json),
+[after](../build/benchmarks/lazy-after.json),
+[visible before](../build/benchmarks/lazy-visible-before.json),
+[visible after](../build/benchmarks/lazy-visible-after.json),
+[Neovim](../build/benchmarks/lazy-neovim.json),
+[production visible sample](../build/benchmarks/lazy-production-visible-sample.txt).
+These are local ignored artifacts; the tables preserve the measurements.

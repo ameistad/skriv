@@ -33,15 +33,18 @@ func hash(_ url: URL) throws -> String {
     return hash.finalize().map { String(format: "%02x", $0) }.joined()
 }
 
-// Each workload runs in a fresh process. No user files/configuration, windows,
-// clipboard changes or native Find animations. Native layout is not measured.
+// Each workload/profile runs in a fresh process. No user files/configuration,
+// clipboard changes or native Find animations. Only the visible profile opens a window.
 _ = NSApplication.shared
-NSApp.setActivationPolicy(.prohibited)
+let profile = CommandLine.arguments.count > 3 ? CommandLine.arguments[3] : "offscreen"
+NSApp.setActivationPolicy(profile == "visible" ? .accessory : .prohibited)
 let shape = CommandLine.arguments[1]
 let repetitions = Int(CommandLine.arguments[2])!
 let unit = shape == "unicode" ? "En norsk notatlinje: blåbær, øl, ål, ærlig arbeid og 👩🏽‍💻.\n"
     : shape == "singleLine" ? "a" : "a\n"
-let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+let fixtureRoot = ProcessInfo.processInfo.environment["SKRIV_BENCHMARK_DIRECTORY"]
+    .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? FileManager.default.temporaryDirectory
+let directory = fixtureRoot.appendingPathComponent("skriv-large-file-input-" + UUID().uuidString)
 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 defer { try? FileManager.default.removeItem(at: directory) }
 let input = directory.appendingPathComponent("input.txt")
@@ -60,6 +63,63 @@ var times: [String: Double] = [:]
 let document = SkrivDocument()
 times["loadMilliseconds"] = try measure { try document.read(from: input, ofType: SkrivDocument.typeName) }
 let storage = document.textStorage
+if profile == "engine" {
+    var engine = VimEngine()
+    samples["loaded"] = memory()
+    times["firstEngineCommandMilliseconds"] = measure {
+        precondition(engine.handle("<Esc>", storage: storage.mutableString, caret: 0) == .move(0))
+    }
+    samples["motionIndex"] = memory()
+    times["lastLineJumpMilliseconds"] = measure {
+        guard case .move(let offset) = engine.handle("G", storage: storage.mutableString, caret: 0) else {
+            preconditionFailure("G did not move")
+        }
+        let expected = shape == "singleLine" ? 0 : storage.length
+        precondition(offset == expected)
+    }
+    samples["afterJump"] = memory()
+    var diagnostics: [String: Any] = [:]
+    #if LAZY_INDEX_DIAGNOSTICS
+    let metrics = engine.cacheMetrics
+    diagnostics = ["indexedUTF16Length": metrics.indexedUTF16Length,
+                   "cachedBytes": metrics.cachedBytes, "budgetBytes": metrics.budgetBytes,
+                   "evictionCount": metrics.evictionCount, "entryCount": metrics.entryCount,
+                   "metadataScanMilliseconds": metrics.metadataScanMilliseconds,
+                   "graphemeBuildMilliseconds": metrics.graphemeBuildMilliseconds]
+    #endif
+    let report: [String: Any] = ["profile": profile, "shape": shape, "repetitions": repetitions,
+        "utf8Bytes": unit.utf8.count * repetitions, "sha256": inputHash,
+        "timings": times, "memory": samples, "indexDiagnostics": diagnostics]
+    FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]))
+    try FileManager.default.removeItem(at: directory)
+    exit(0)
+}
+if profile == "visible" {
+    var controller: DocumentWindowController!
+    times["visibleHierarchyMilliseconds"] = measure {
+        controller = DocumentWindowController(document: document, settings: EditorSettings())
+        document.addWindowController(controller)
+    }
+    times["visibleFirstDisplayMilliseconds"] = measure {
+        controller.showWindow(nil)
+        controller.window?.displayIfNeeded()
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+    }
+    samples["loaded"] = memory()
+    times["firstMotionMilliseconds"] = measure {
+        controller.textView.handleVimKey("<Esc>")
+        controller.window?.displayIfNeeded()
+    }
+    precondition(controller.textView.selectedRange().location == 0)
+    samples["motionIndex"] = memory()
+    let report: [String: Any] = ["profile": profile, "shape": shape, "repetitions": repetitions,
+        "utf8Bytes": unit.utf8.count * repetitions, "sha256": inputHash,
+        "timings": times, "memory": samples]
+    FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]))
+    controller.close()
+    try FileManager.default.removeItem(at: directory)
+    exit(0)
+}
 let layout = NSLayoutManager()
 let container = NSTextContainer(containerSize: NSSize(width: 800, height: CGFloat.greatestFiniteMagnitude))
 layout.addTextContainer(container)
@@ -71,7 +131,9 @@ var ruler: LineNumberRuler!
 times["gutterIndexMilliseconds"] = measure { ruler = LineNumberRuler(scrollView: scroll, editor: view) }
 samples["loaded"] = memory()
 view.setSelectedRange(NSRange(location: 0, length: 0))
-times["firstMotionMilliseconds"] = measure { view.handleVimKey("<Esc>") }
+times["firstMotionMilliseconds"] = measure {
+    view.handleVimKey("<Esc>")
+}
 precondition(view.selectedRange().location == 0)
 samples["motionIndex"] = memory()
 var motionTimes: [Double] = []
@@ -129,7 +191,7 @@ let outputHash = try hash(output)
 precondition(outputHash == inputHash)
 samples["saved"] = memory()
 withExtendedLifetime(ruler) {}
-let report: [String: Any] = ["shape": shape, "repetitions": repetitions, "utf8Bytes": unit.utf8.count * repetitions,
+let report: [String: Any] = ["profile": profile, "shape": shape, "repetitions": repetitions, "utf8Bytes": unit.utf8.count * repetitions,
     "sha256": inputHash, "timings": times, "memory": samples, "motionPairMilliseconds": motionTimes,
     "repeatSearchMilliseconds": searchTimes, "storageEditMilliseconds": editTimes,
     "postEditMotionMilliseconds": rebuildTimes, "editCycleMilliseconds": editCycleTimes,
