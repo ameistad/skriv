@@ -1,6 +1,6 @@
 import AppKit
 
-/// Benchmark-only driver used by scripts/benchmark.py via `--benchmark-launch-count`.
+/// Benchmark-only driver used by scripts/benchmark.swift launch via `--benchmark-launch-count`.
 /// It invokes the same document-opening action on the main loop. It never sends synthetic
 /// input and never closes a modified or saved document. Inert without the flag.
 @MainActor

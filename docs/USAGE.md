@@ -291,19 +291,31 @@ smaller command set. Skriv does not embed or launch an external editor runtime.
 
 ## Verification
 
+Developer benchmarks and differential checks use the standalone Swift tool
+`scripts/benchmark.swift`; run it with `--help` to list all six commands. It uses
+Foundation and CryptoKit without extra packages. Python is not required.
+
 ```sh
 swift test
 # Optional developer-only comparison against a clean Neovim installation:
 # This checks Vim editing behavior; Neovim is not an app or build dependency.
-python3 scripts/check-vim-conformance.py
+swift scripts/benchmark.swift conformance
 # Build release immediately before performance measurements:
 ./scripts/build-app.sh release
-python3 scripts/benchmark.py --runs 10 --warm 20
+swift scripts/benchmark.swift launch --runs 10 --warm 20
 # CPU-only Unicode editing benchmark (no windows):
-python3 scripts/benchmark-editing.py --output build/benchmarks/editing.json
+swift scripts/benchmark.swift editing --output build/benchmarks/editing.json
 # Preserve a release app before changing code, then alternate it with the new build:
-python3 scripts/compare-launch.py --before /path/to/previous/Skriv.app --pairs 5 --warm 20
+swift scripts/benchmark.swift compare --before /path/to/previous/Skriv.app --pairs 5 --warm 20
 ```
+
+The conformance check compares text, normal-mode cursor offsets, and register
+contents/types against Neovim with `startofline` enabled. Its ASCII fixtures
+avoid the intentional difference between Skriv's whole-grapheme editing and
+Neovim's character operations. Insert-mode cursor offsets are excluded because
+Neovim's `feedkeys()` exits insert mode when input runs out. Add `--large-files`
+to include long lines and index chunk boundaries. This checks the supported
+command subset, not complete Vim compatibility.
 
 Tests cover Unicode/UTF-8, command boundaries and counts, clipboard metadata,
 native editing/undo/composition, presentation-only refreshes, indentation,

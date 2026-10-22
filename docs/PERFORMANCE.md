@@ -4,13 +4,13 @@ Build optimized code, then run on a logged-in macOS desktop:
 
 ```sh
 ./scripts/build-app.sh release
-python3 scripts/benchmark.py --runs 10 --warm 20 --require-readiness
+swift scripts/benchmark.swift launch --runs 10 --warm 20 --require-readiness
 ```
 
 This runs ten fresh processes and twenty warm document invocations per process.
 Each process creates and closes only its own unmodified documents, then exits.
 Avoid interacting with benchmark windows. A separately running Skriv process and its documents are unaffected.
-The script requires Python 3.10+ and saves raw JSONL and a JSON summary under
+The script requires Swift and saves raw JSONL and a JSON summary under
 `build/benchmarks/run-*`. Reports contain hardware, OS, bundle and executable
 sizes, median/p95/min/max milliseconds, and resident memory in bytes.
 The harness fingerprints `~/.config/skriv/config.skriv` and rejects changes
@@ -26,11 +26,11 @@ when comparing startup changes.
 
 Timing boundaries:
 
-- `coldProcess`: immediately before Python creates the process, through
-  first-responder assignment or AppKit display submission. Includes subprocess
-  setup, process creation, dynamic linking, and application startup; excludes
+- `coldProcess`: immediately before Swift creates the process, through
+  first-responder assignment or AppKit display submission. Includes environment
+  assignment, process creation, dynamic linking, and application startup; excludes
   Finder/Launch Services dispatch. The harness passes a monotonic nanosecond
-  timestamp, verified to use the same macOS uptime clock as Swift DispatchTime.
+  timestamp using the same Swift DispatchTime uptime clock as the app.
   This does not force OS filesystem caches to be cold.
 - `coldStartup`: the first Swift statement in `main` to first-responder
   assignment and AppKit display submission. It excludes process creation,
@@ -51,7 +51,7 @@ Timing boundaries:
 - `interfaceComplete`: the complete initial interface has submitted its drawing.
   This is distinct from event-loop readiness; both are needed for a usable window.
 - `fullyReady`: the later of `eventLoopReady` and `interfaceComplete`, derived by
-  the Python harness in summaries. Application-emitted JSONL remains unmodified.
+  the Swift harness in summaries. Application-emitted JSONL remains unmodified.
 - Memory: `mach_task_basic_info.resident_size` sampled with an empty document open,
   after all benchmark documents close, with a 1,000-line Norwegian/emoji document open, and after
   warm runs. Representative-document and final-idle samples allow one second for
@@ -104,9 +104,12 @@ Apple documents that
 [`displayIfNeeded`](https://developer.apple.com/documentation/appkit/nswindow/displayifneeded())
 passes drawing through the window's view hierarchy; it does not promise
 physical display presentation.
-Python documents that [`monotonic_ns`](https://docs.python.org/3/library/time.html#time.monotonic)
-uses `mach_absolute_time` on macOS, with a clock shared across processes from
-Python 3.10 onward. The harness checks the clock implementation before running.
+The Swift harness uses `DispatchTime.now().uptimeNanoseconds`, the same clock as
+the app's launch metrics. It records the process start immediately before
+`Process.run()`, after preparing output capture and resolving the executable.
+Historical results below used the previous Python harness; process-launch
+overhead and bootstrap samples can differ between harness versions. Use the
+same current harness for both builds when making a new comparison.
 
 ## Baseline — 2026-10-20
 
@@ -269,10 +272,10 @@ Reproduce:
 ditto build/Skriv.app build/performance-before/Skriv.app
 # After changing code:
 ./scripts/build-app.sh release
-python3 scripts/compare-launch.py --before build/performance-before/Skriv.app
-python3 scripts/benchmark-editing.py --output build/benchmarks/editing.json
+swift scripts/benchmark.swift compare --before build/performance-before/Skriv.app
+swift scripts/benchmark.swift editing --output build/benchmarks/editing.json
 # Optional: benchmark VimEngine.swift and LiteralSearch.swift from a source snapshot:
-python3 scripts/benchmark-editing.py --source-root /path/to/snapshot \
+swift scripts/benchmark.swift editing --source-root /path/to/snapshot \
   --output build/benchmarks/editing-before.json
 ```
 
@@ -326,9 +329,9 @@ Reports retain raw samples, compiler flags, host details, source/fixture hashes
 and six decimal places for milliseconds so short operations do not round to zero.
 
 ```sh
-python3 scripts/benchmark-editing.py --output build/benchmarks/engine.json
-python3 scripts/benchmark-editing.py --native --output build/benchmarks/native.json
-python3 scripts/benchmark-editing.py --native --source-root /path/to/source-snapshot \
+swift scripts/benchmark.swift editing --output build/benchmarks/engine.json
+swift scripts/benchmark.swift editing --native --output build/benchmarks/native.json
+swift scripts/benchmark.swift editing --native --source-root /path/to/source-snapshot \
   --output build/benchmarks/native-before.json
 ```
 
@@ -450,7 +453,7 @@ behavior, then compare with the same geometry and endpoints:
 ditto build/Skriv.app build/startup-before/Skriv.app
 # Make the candidate change, then rebuild:
 ./scripts/build-app.sh
-python3 scripts/compare-launch.py --before build/startup-before/Skriv.app \
+swift scripts/benchmark.swift compare --before build/startup-before/Skriv.app \
   --pairs 30 --warm 10 --require-readiness
 ```
 
@@ -492,9 +495,9 @@ text storage or a fixed memory ceiling.
 # Before changing sources, preserve them for an identical-workload comparison:
 mkdir -p build/large-file-before
 cp -R Sources build/large-file-before/
-python3 scripts/benchmark-large-files.py --source-root build/large-file-before \
+swift scripts/benchmark.swift large-files --source-root build/large-file-before \
   --runs 3 --output build/benchmarks/large-before.json
-python3 scripts/benchmark-large-files.py --runs 3 \
+swift scripts/benchmark.swift large-files --runs 3 \
   --output build/benchmarks/large-after.json
 ```
 
@@ -657,12 +660,12 @@ The release app builds and signs successfully.
 
 ```sh
 # Preserve Sources before this change in build/incremental-before, then:
-python3 scripts/benchmark-large-files.py --source-root build/incremental-before \
+swift scripts/benchmark.swift large-files --source-root build/incremental-before \
   --runs 3 --output build/benchmarks/incremental-before.json
-python3 scripts/benchmark-large-files.py --runs 3 \
+swift scripts/benchmark.swift large-files --runs 3 \
   --output build/benchmarks/incremental-after.json
 swift test
-python3 scripts/check-vim-conformance.py --large-files
+swift scripts/benchmark.swift conformance --large-files
 ./scripts/build-app.sh release
 ```
 
@@ -753,7 +756,7 @@ be combined with another profile to infer peak RSS.
 
 ### Comparable editor measurement
 
-`scripts/benchmark-neovim-large-files.py` opens the exact same four fixture byte
+`scripts/benchmark.swift neovim` opens the exact same four fixture byte
 sequences in fresh Neovim 0.12.5 processes, with no user configuration, plugins,
 swap, persistent undo or highlighting; wrapping is disabled. File loading and
 navigation are timed inside Neovim after startup. Peak RSS comes from macOS
@@ -849,21 +852,21 @@ Coverage includes lazy cold jumps, byte-budget eviction/revisits, edits in
 uncached chunks, Unicode and CRLF boundaries, copied-engine isolation, native
 Insert/undo/redo/storage replacement, and oversized-line composed-character
 navigation against a Swift Character oracle. The release app builds and passes
-strict code-signature verification. Benchmark scripts compile with Python and
-`git diff --check` passes.
+strict code-signature verification. At that revision, the Python benchmark
+scripts passed compilation checks and `git diff --check` passed.
 
 ```sh
 mkdir -p build/lazy-before
 git archive ce8b46a Sources | tar -x -C build/lazy-before
-python3 scripts/benchmark-large-files.py --source-root build/lazy-before \
+swift scripts/benchmark.swift large-files --source-root build/lazy-before \
   --profiles offscreen engine --runs 3 --output build/benchmarks/lazy-before.json
-python3 scripts/benchmark-large-files.py --profiles offscreen engine \
+swift scripts/benchmark.swift large-files --profiles offscreen engine \
   --diagnostics --runs 3 --output build/benchmarks/lazy-after.json
-python3 scripts/benchmark-large-files.py --source-root build/lazy-before \
+swift scripts/benchmark.swift large-files --source-root build/lazy-before \
   --profiles visible --runs 1 --timeout 45 --output build/benchmarks/lazy-visible-before.json
-python3 scripts/benchmark-large-files.py --profiles visible --runs 1 \
+swift scripts/benchmark.swift large-files --profiles visible --runs 1 \
   --timeout 45 --output build/benchmarks/lazy-visible-after.json
-python3 scripts/benchmark-neovim-large-files.py --runs 3 \
+swift scripts/benchmark.swift neovim --runs 3 \
   --output build/benchmarks/lazy-neovim.json
 ```
 
