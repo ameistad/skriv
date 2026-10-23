@@ -1,0 +1,104 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage: skriv [--] [file ...]
+       skriv --install [directory]
+
+Open UTF-8 files in Skriv, reusing the running app and any existing tabs.
+With no files, launch or bring Skriv forward. Paths are relative to the
+current directory. Quote paths containing spaces; use -- before names
+starting with a dash. Files must already exist; folders are not supported.
+
+Options:
+  -h, --help       Show this help.
+  -v, --version    Show the app version.
+  --install       Link this launcher into ~/.local/bin, or the given directory.
+EOF
+}
+
+fail() {
+    printf 'skriv: %s\n' "$*" >&2
+    exit 1
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    usage
+    exit 0
+fi
+
+# Follow installed symlinks so the launcher always uses its own app bundle.
+launcher="${BASH_SOURCE[0]}"
+while [[ -L "$launcher" ]]; do
+    directory="$(cd -P "$(dirname "$launcher")" && pwd)"
+    launcher="$(readlink "$launcher")"
+    [[ "$launcher" == /* ]] || launcher="$directory/$launcher"
+done
+directory="$(cd -P "$(dirname "$launcher")" && pwd)"
+launcher="$directory/$(basename "$launcher")"
+
+if [[ "$directory" == */Contents/Resources/bin ]]; then
+    app_path="${directory%/Contents/Resources/bin}"
+else
+    # Allow running the checked-in script after a local build, too.
+    app_path="$(cd "$directory/.." && pwd)/build/Skriv.app"
+fi
+[[ -x "$app_path/Contents/MacOS/Skriv" ]] || fail "Skriv.app was not found at $app_path. Build the app first, or reinstall the launcher from its new location."
+
+case "${1:-}" in
+    --install)
+        [[ $# -le 2 ]] || fail "Usage: skriv --install [directory]"
+        install_directory="${2:-$HOME/.local/bin}"
+        mkdir -p -- "$install_directory"
+        install_directory="$(cd "$install_directory" && pwd -P)"
+        destination="$install_directory/skriv"
+        # Install the bundled copy even when invoked from the source checkout.
+        target="$app_path/Contents/Resources/bin/skriv"
+        [[ -x "$target" ]] || fail "The app has no bundled launcher. Rebuild it first."
+        if [[ -L "$destination" && "$(readlink "$destination")" == "$target" ]]; then
+            printf 'Already installed: %s\n' "$destination"
+        else
+            [[ ! -e "$destination" && ! -L "$destination" ]] || fail "Refusing to replace $destination. Remove it explicitly or choose another directory."
+            ln -s "$target" "$destination"
+            printf 'Installed: %s\n' "$destination"
+        fi
+        case ":$PATH:" in
+            *":$install_directory:"*) ;;
+            *) printf 'Add this directory to your shell PATH: %s\n' "$install_directory" ;;
+        esac
+        exit 0
+        ;;
+    -v|--version)
+        [[ $# -eq 1 ]] || fail "Usage: skriv --version"
+        version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Contents/Info.plist")"
+        printf 'Skriv %s\n' "$version"
+        exit 0
+        ;;
+esac
+
+paths=()
+options=true
+for argument in "$@"; do
+    if $options; then
+        case "$argument" in
+            --) options=false; continue ;;
+            -*) fail "Unknown option: $argument. Use -- before a filename starting with a dash, or --help for usage." ;;
+        esac
+    fi
+    [[ -n "$argument" ]] || fail "Empty file path."
+    path="$argument"
+    [[ "$path" == /* ]] || path="$PWD/$path"
+    [[ ! -d "$path" ]] || fail "Directories are not supported: $argument"
+    [[ -f "$path" ]] || fail "Not an existing regular file: $argument"
+    [[ -r "$path" ]] || fail "File is not readable: $argument"
+    paths+=("$path")
+done
+
+# Launch Services delivers file-open events to the existing process. Never run
+# Contents/MacOS/Skriv directly, which would start a second editor instance.
+if [[ ${#paths[@]} -eq 0 ]]; then
+    exec open -a "$app_path"
+else
+    exec open -a "$app_path" -- "${paths[@]}"
+fi

@@ -23,6 +23,19 @@ open build/Skriv.app
 The local build is ad-hoc signed. Save open documents and quit an older build before relaunching.
 The build script defaults to release; use `./scripts/build-app.sh debug` for an unoptimized development build.
 
+Install the terminal launcher once (no administrator access needed):
+
+```sh
+./build/Skriv.app/Contents/Resources/bin/skriv --install
+skriv README.md
+skriv "notes with spaces.txt" another-file.txt
+```
+
+The installer links `skriv` into `~/.local/bin`; add that directory to your `PATH`
+if needed. `skriv` alone launches or focuses the app. File arguments open existing
+UTF-8 files as tabs, reusing already-open documents. See [CLI usage](docs/USAGE.md#command-line)
+for installation in another directory and supported options.
+
 ## Basics
 
 `⌘T` or `⌘N` creates a tab, `⌘W` closes it, and `⇧⌘N` creates a separate window.
@@ -36,7 +49,7 @@ Use an external launcher such as Alfred or Raycast to assign a global shortcut t
 Use `⌘,` to open the configuration and `⇧⌘,` to reload it after saving.
 The file uses `key = value` lines; see the [configuration reference](docs/USAGE.md#configuration).
 
-Run tests with `swift test`.
+Run editor tests with `swift test` and launcher tests with `python3 scripts/test-cli.py`.
 
 [Usage](docs/USAGE.md) · [Performance](docs/PERFORMANCE.md) · [Distribution](docs/DISTRIBUTION.md)
 

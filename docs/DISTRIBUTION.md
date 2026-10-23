@@ -4,6 +4,10 @@
 `build/Skriv.app`. The app uses system frameworks and ships no external editor
 runtime, network updater, or third-party package.
 
+The bundle also includes `Contents/Resources/bin/skriv`, a Bash launcher using
+macOS Launch Services. It is copied before signing. Users can run that launcher
+with `--install` to link it into `~/.local/bin` (see [CLI usage](USAGE.md#command-line)).
+
 The ad-hoc signature is suitable for local development. To distribute outside
 this machine, use an Apple Developer ID Application signing identity, enable the
 hardened runtime, notarize, and staple the result. The commands below are an

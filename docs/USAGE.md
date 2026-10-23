@@ -71,6 +71,43 @@ The source mark is from [Streamline](https://streamlinehq.com).
   including when `o` switches ends. Native selections use their starting line.
 
 
+## Command line
+
+The app includes a `skriv` launcher. After building, install it with:
+
+```sh
+./build/Skriv.app/Contents/Resources/bin/skriv --install
+```
+
+For an app copied to Applications, use
+`/Applications/Skriv.app/Contents/Resources/bin/skriv --install` instead.
+This creates a symlink in `~/.local/bin` without administrator access or changes
+to your shell configuration. If that directory is not on your `PATH`, add
+`export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc`, then open a new terminal.
+You can choose another directory with `skriv --install /path/to/bin`.
+The installer refuses to replace an existing, different command or symlink.
+
+```sh
+skriv                         # Launch or focus Skriv
+skriv README.md               # Open a file relative to the current directory
+skriv ~/notes.txt "draft 2.txt" # Open multiple files as tabs
+skriv -- -notes.txt           # Open a filename starting with a dash
+skriv --help
+skriv --version
+```
+
+The launcher uses its own app bundle and reuses the running app. Opening an
+already-open file selects its tab and preserves unsaved edits. It returns after
+macOS accepts the launch request; it does not wait for documents to close.
+File arguments must be existing, readable regular files. Directories, new file
+paths, stdin, and editor flags such as `--wait` or `--goto` are not supported.
+Argument errors exit nonzero before opening any files; encoding/read errors
+encountered by the app appear in its native error dialog.
+
+Rebuilding the app at the same location keeps the command working. If you move
+the app, remove the old symlink and run `--install` from the new location.
+To uninstall the default link, run `rm ~/.local/bin/skriv`.
+
 ## Vim subset
 
 `Esc` enters **NORMAL**; `i` resumes native typing. Native Command shortcuts,
