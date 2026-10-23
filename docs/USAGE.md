@@ -189,6 +189,26 @@ direction and `N` reverses it. Counts such as `3/` and `2n` select later matches
 No match leaves the caret unchanged. Each document keeps its own Vim query and
 direction in memory; the native Find bar uses AppKit's separate search state.
 
+## Markdown highlighting
+
+Markdown files (`.md` and `.markdown`, case-insensitive) receive color-only syntax
+highlighting. Headings starting with `#`, list/quote markers, same-line emphasis,
+inline links/images, inline code, and fenced code blocks are supported. Markers
+stay visible and fonts, spacing, clipboard text, and saved UTF-8 bytes stay unchanged.
+Save As reevaluates the filename; untitled notes and other file extensions stay plain.
+
+This is a basic subset, not a full CommonMark parser: setext headings, reference
+links, HTML, multiline inline constructs, complex delimiter nesting, and programming
+language highlighting inside code blocks are not supported. Colors use the bundled
+palette. The existing selection colors continue to take precedence while selecting.
+
+Documents over 1,048,576 UTF-16 units (roughly 1 MB of ASCII) remain plain. Inline
+parsing is skipped on logical lines over 16,384 UTF-16 units; lines already inside
+a fenced block retain the code color and fence state. Large scans run in queued
+batches, so colors may finish appearing after text becomes editable. There is no
+idle polling. Set `markdown-highlighting = false` and reload configuration to turn
+it off in all windows.
+
 ## Configuration
 
 Skriv reads **`~/.config/skriv/config.skriv`** at startup. This is the sole
@@ -236,6 +256,7 @@ keybind = L=l
 | `font-family` | `monospace` | Installed font family or PostScript name; unavailable fonts fall back to system monospace |
 | `font-size` | `16` | Points, 6–72; fractional sizes allowed |
 | `writing-width` | `72` | Maximum column width in font character advances, 20–500; left-aligned and shrinks to fit the window |
+| `markdown-highlighting` | `true` | Color basic Markdown syntax in `.md`/`.markdown` files; `false` disables it |
 | `wrap` | `true` | Wrap presentation; `false` enables horizontal scrolling |
 | `word-wrap` | `true` | Break wrapping at word boundaries; `false` allows character boundaries |
 | `line-numbers` | `none` | `none`, `absolute`, `relative`, or `both` |

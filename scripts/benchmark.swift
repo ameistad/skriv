@@ -295,6 +295,32 @@ func editing(_ args: Arguments) throws {
     }
     try writeJSON(report, to: destination)
 }
+func markdown(_ args: Arguments) throws {
+    let sourceRoot = path(try args.string("--source-root", root.path)), destination = path(try args.string("--output"))
+    let runs = try args.int("--runs", 3)
+    let sources = try fm.contentsOfDirectory(at: sourceRoot.appendingPathComponent("Sources/SkrivCore"), includingPropertiesForKeys: nil)
+        .filter { $0.pathExtension == "swift" }.sorted { $0.path < $1.path }
+    let fixture = root.appendingPathComponent("scripts/fixtures/MarkdownBenchmarkMain.swift")
+    let flags = compilerFlags + ["-D", "MARKDOWN_DIAGNOSTICS"]
+    let info = try metadata(sources: sources, fixture: fixture, sourceRoot: sourceRoot, flags: flags)
+    let work = try temporary("skriv-markdown-")
+    defer { try? fm.removeItem(at: work) }
+    let binary = try compile(sources, fixture: fixture, work: work, flags: flags)
+    var results: [Object] = []
+    for index in 0..<runs {
+        for (shape, size) in [("notes", 10_000), ("notes", 100_000), ("notes", 1_000_000),
+                              ("notes", 1_500_000), ("dense", 100_000), ("long", 100_000), ("short", 1_000_000)] {
+            for enabled in index.isMultiple(of: 2) ? ["off", "on"] : ["on", "off"] {
+                var report = try readJSON(run([binary.path, shape, String(size), enabled, "--benchmark-launch-count", "1"], timeout: 120).output)
+                report["run"] = index
+                results.append(report)
+                print("Markdown \(index + 1)/\(runs): \(shape) \(size) \(enabled)"); fflush(stdout)
+            }
+        }
+    }
+    try writeJSON(["metadata": info, "workloads": results], to: destination)
+}
+
 func largeFiles(_ args: Arguments) throws {
     let sourceRoot = path(try args.string("--source-root", root.path)), destination = path(try args.string("--output"))
     let runs = try args.int("--runs", 3)
@@ -558,6 +584,7 @@ Usage: swift scripts/benchmark.swift <command> [options]
   compare      --before APP [--after APP] [--pairs 5] [--warm 20]
                [--output build/benchmarks] [--require-readiness]
   editing      --output FILE [--source-root DIR] [--native]
+  markdown     --output FILE [--source-root DIR] [--runs 3]
   large-files  --output FILE [--source-root DIR] [--runs 3] [--timeout 300]
                [--profiles offscreen engine visible] [--shapes unicode singleLine denseLines]
                [--diagnostics]
@@ -579,6 +606,7 @@ do {
             _ = try launch(app: path(args.string("--app", "build/Skriv.app")), runs: args.int("--runs", 10, range: 1...100), warm: args.int("--warm", 20, range: 1...1000), destination: path(args.string("--output", "build/benchmarks")), requireReadiness: args.has("--require-readiness"))
         case "compare": try compare(Arguments(tail, flags: ["--require-readiness"], options: ["--before", "--after", "--pairs", "--warm", "--output"]))
         case "editing": try editing(Arguments(tail, flags: ["--native"], options: ["--source-root", "--output"]))
+        case "markdown": try markdown(Arguments(tail, options: ["--source-root", "--runs", "--output"]))
         case "large-files": try largeFiles(Arguments(tail, flags: ["--diagnostics"], lists: ["--profiles", "--shapes"], options: ["--source-root", "--runs", "--timeout", "--output"]))
         case "neovim": try neovim(Arguments(tail, options: ["--runs", "--output"]))
         case "conformance": try conformance(Arguments(tail, flags: ["--large-files"], options: ["--nvim"]))

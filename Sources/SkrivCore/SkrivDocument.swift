@@ -10,6 +10,17 @@ public final class SkrivDocument: NSDocument {
     let textStorage = NSTextStorage()
     private var pendingClose: DocumentCloseRequest?
 
+    public override var fileURL: URL? {
+        didSet {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                for case let controller as DocumentWindowController in self.windowControllers {
+                    controller.updateMarkdownHighlighting()
+                }
+            }
+        }
+    }
+
     public override init() {
         super.init()
         hasUndoManager = true

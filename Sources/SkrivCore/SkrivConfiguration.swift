@@ -66,6 +66,7 @@ struct SkrivConfiguration: Equatable, Sendable {
                     result.editor.fontSize = size
                 }
             case "writing-width": result.editor.writingWidth = try integer(defaults.editor.writingWidth, 20...500)
+            case "markdown-highlighting": result.editor.markdownHighlighting = try boolean(defaults.editor.markdownHighlighting)
             case "wrap": result.editor.wrap = try boolean(defaults.editor.wrap)
             case "word-wrap": result.editor.wordWrap = try boolean(defaults.editor.wordWrap)
             case "expand-tabs": result.editor.expandTabs = try boolean(defaults.editor.expandTabs)
@@ -118,6 +119,8 @@ struct SkrivConfiguration: Equatable, Sendable {
     # font-size = 16
     # writing-width = 72
 
+    # markdown-highlighting = true
+    # Colors .md/.markdown documents up to 1,048,576 UTF-16 units.
     # wrap = true
     # word-wrap = true
     # line-numbers = none

@@ -9,6 +9,7 @@ struct EditorSettings: Equatable, Sendable {
     var selectionForeground: UInt32?
     var lineNumberForeground: UInt32?
     var lineNumberBackground: UInt32?
+    var markdownHighlighting = true
     var number = false
     var relativeNumber = false
     var wrap = true

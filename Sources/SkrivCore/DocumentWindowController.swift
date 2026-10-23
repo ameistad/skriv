@@ -10,6 +10,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let scrollView: NSScrollView
     private let modeLabel = NSTextField(labelWithString: "INSERT")
     private let tabShortcutLabel = NSTextField(labelWithString: "")
+    private(set) var markdownHighlighter: MarkdownHighlighter?
+    private weak var highlightingDocument: SkrivDocument?
+    private var markdownHighlightingEnabled = true
     private var numberRuler: LineNumberRuler?
     private var editorBottom: NSLayoutConstraint?
     private var promptBottom: NSLayoutConstraint?
@@ -113,6 +116,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         window.contentView = content
         LaunchMetrics.shared.markPhase("viewHierarchy")
         super.init(window: window)
+        self.highlightingDocument = document
         self.editorBottom = editorBottom
         shouldCascadeWindows = false
         window.delegate = self
@@ -159,6 +163,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
     func windowWillClose(_ notification: Notification) {
         saveWindowFrame()
         isClosing = true
+        markdownHighlighter?.stop()
         let survivors = window?.tabGroup?.windows.filter { $0 !== window } ?? []
         // Wait until AppKit finishes removing the tab before updating the
         // surviving group's bar for its new document count.
@@ -424,8 +429,17 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
     }
 
+    func updateMarkdownHighlighting() {
+        guard !isClosing, let layout = textView.layoutManager else { return }
+        let url = highlightingDocument?.fileURL
+        let eligible = markdownHighlightingEnabled && ["md", "markdown"].contains(url?.pathExtension.lowercased() ?? "")
+        if eligible && markdownHighlighter == nil { markdownHighlighter = MarkdownHighlighter(layout: layout) }
+        markdownHighlighter?.configure(enabled: markdownHighlightingEnabled, fileURL: url)
+    }
+
     func applySettings(_ configuration: EditorSettings?) {
         let settings = configuration ?? EditorSettings()
+        markdownHighlightingEnabled = settings.markdownHighlighting
         let background = settings.background.map(EditorTheme.color) ?? EditorTheme.background
         let foreground = settings.foreground.map(EditorTheme.color) ?? EditorTheme.foreground
         window?.backgroundColor = background
@@ -472,6 +486,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         scrollView.rulersVisible = showNumbers
         textView.updateWritingLayout()
         textView.needsDisplay = true
+        updateMarkdownHighlighting()
     }
 
     func undoManager(for view: NSTextView) -> UndoManager? {

@@ -877,3 +877,96 @@ Raw reports: [before](../build/benchmarks/lazy-before.json),
 [Neovim](../build/benchmarks/lazy-neovim.json),
 [production visible sample](../build/benchmarks/lazy-production-visible-sample.txt).
 These are local ignored artifacts; the tables preserve the measurements.
+
+## Markdown colors — 2026-10-23
+
+Color-only Markdown highlighting uses the existing TextKit 1 layout manager's
+temporary foreground attributes. Native text storage remains authoritative;
+colors never enter saved text, undo history, or a second text model. A line cache
+stores UTF-16 starts and outgoing fence state. Character edits invalidate nearby
+lines and propagate until fence state converges. Initial scans and extensive
+changes are queued in batches with a cooperative 2 ms budget. No idle timer runs.
+Plain files and untitled notes do not allocate a highlighter. Markdown documents
+over 1,048,576 UTF-16 units release their cache and remain plain. Inline parsing
+is skipped on logical lines longer than 16,384 units; existing fence state is
+preserved. The supported subset and configuration switch are in `USAGE.md`.
+
+Reproduce with:
+
+```sh
+swift scripts/benchmark.swift markdown --runs 3 --output build/benchmarks/markdown.json
+swift test
+./scripts/build-app.sh release
+```
+
+The harness compiles optimized Swift 6 with whole-module optimization and uses a
+fresh process for each fixture/mode. Three on/off pairs alternate ordering on the
+second run. Each process performs 100 replacements, 100 insertions, and 100
+deletions through the real native editor, restores the original text, and checks
+exact equality. Both modes receive a 100 ms event-loop settling period before
+editing. It uses the production controller and default settings without showing
+windows, reading user configuration, or saving window preferences. It measures
+controller construction, queued highlighting completion, isolated scanner work,
+color batches, native edits plus completed coloring and viewport layout, and RSS.
+The source hashes, compiler flags, and raw samples are in the report.
+
+Release measurements on Apple M3 Pro (Mac15,7), 18 GiB RAM, macOS 26.5:
+
+| Fixture | Initial coloring work, median | Queued completion, median | Edit recoloring p95¹ | Retained line-cache capacity |
+| --- | ---: | ---: | ---: | ---: |
+| 9,906-byte notes | 1.21 ms | 30.13 ms | 0.023 ms | 16 KiB |
+| 99,949-byte notes | 8.19 ms | 38.38 ms | 0.050 ms | 192 KiB |
+| 99,981-byte dense Markdown | 14.44 ms | 46.35 ms | 0.043 ms | 192 KiB |
+| 999,998-byte notes | 116.09 ms | 188.46 ms | 0.304 ms | 2 MiB |
+| 1,499,997-byte notes | Disabled | Disabled | No coloring work | 0 |
+| 100,000-byte single line | 0.20 ms | 47.15 ms | 0.441 ms | 32 bytes |
+| 1,000,000 bytes / 500,000 short lines | 233.51 ms | 301.58 ms | 1.958 ms | 16 MiB |
+
+¹ Largest of the pooled replacement, insertion, and deletion p95 values (300
+samples per operation). These are elapsed times inside highlighter batch calls,
+including scanner and temporary-attribute work, not OS thread-CPU counters. The
+raw report's `*ColorCPU*` keys name these elapsed-work samples. They exclude
+synchronous cache invalidation in the edit notification; complete native cycles
+below include that work. Initial coloring work is the sum of batch elapsed times.
+Queued completion also includes event-loop scheduling and AppKit startup work;
+it is not visible pixel latency. Single-line input exceeds the inline parsing
+limit and receives no syntax colors.
+
+| Complete native cycle p95 | Off: replace / insert / delete | On: replace / insert / delete |
+| --- | ---: | ---: |
+| ~100 KB notes | 1.589 / 1.526 / 1.536 ms | 0.829 / 0.871 / 0.761 ms |
+| ~1 MB notes | 3.875 / 2.746 / 2.675 ms | 4.084 / 3.117 / 3.244 ms |
+| 500,000 short lines | 1.320 / 1.108 / 1.044 ms | 3.267 / 4.027 / 3.954 ms |
+
+The 100 KB workload meets the proposed <2 ms additional-work target. Some native
+cycles were faster with coloring enabled; this does not establish a general
+editing speedup. AppKit's deferred work, attribute runs, caches, and desktop load
+influence these measurements. Native controller construction still dominates
+large-file opening (several seconds around 1 MB on this fixture); the existing
+opening/layout bottleneck is not fixed by highlighting. The 100 KB single-line
+native editing workload remains about 16–20 ms at p95 despite skipping inline
+parsing.
+
+The batch budget is cooperative, not a hard latency guarantee: checks happen
+between lines, and native calls or scheduling can exceed it. The largest initial
+batch was 2.31 ms on 100 KB notes and 43.49 ms on the ~1 MB notes fixture. Fence
+changes can require rescanning the entire remaining document. Line-offset shifts
+and cache-array maintenance also scale with line count on insertion/deletion;
+the 500,000-line stress case demonstrates that cost even under the size cutoff.
+
+Median post-highlighting RSS was 56.39 → 57.34 MiB for 100 KB notes (off → on),
+71.72 → 86.33 MiB for ~1 MB notes, and 138.03 → 172.00 MiB for 500,000 short lines.
+RSS includes AppKit and transient allocations; it is not an exact attribution or
+fixed memory bound. The retained-capacity column accounts only for the Swift
+line-cache backing array, excluding layout-manager colors and transient scanner
+allocations. No token tree or whole-document text copy is retained by the
+highlighter. Over-limit documents performed no scanning and retained no line
+cache.
+
+Validation: all 129 Swift tests and 8 CLI tests passed, including incremental
+coloring against fresh scans, interrupted/coalesced edits, Unicode and CRLF
+boundaries, fences, byte preservation, undo/redo, marked-text composition,
+filename changes, configuration reset/reload, and size-limit transitions. The
+release application was built successfully. Raw results live in the ignored
+`build/benchmarks/markdown.json`; the tables above preserve the results for other
+checkouts.

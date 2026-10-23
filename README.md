@@ -10,6 +10,7 @@ Built with Swift and AppKit, with no external dependencies.
 - Dark by default, with Etterglød colors and a simple `~/.config/skriv/config.skriv` configuration file.
 - Vim motions, Visual selection, literal search, and native Find/Replace.
 - UTF-8 files, native undo, and explicit save/discard controls.
+- Lightweight, color-only Markdown highlighting for `.md` and `.markdown` files.
 
 ## Build and run
 
