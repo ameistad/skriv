@@ -118,12 +118,26 @@ struct VimEngine {
     /// edits via textDidChange. No whole-document Swift snapshot is required.
     mutating func handle(_ key: String, storage: NSString, caret: Int) -> VimEffect {
         guard mode != .insert || key == "<Esc>" else { return .passThrough }
+        return handle(key, buffer: buffer(for: storage), caret: caret)
+    }
+
+    private mutating func buffer(for storage: NSString) -> Buffer {
         if !usesNativeStorage || cachedBuffer == nil {
             cachedBuffer = Buffer(storage, budget: cacheBudgetBytes)
             cachedText = nil
             usesNativeStorage = true
         }
-        return handle(key, buffer: cachedBuffer!, caret: caret)
+        return cachedBuffer!
+    }
+
+    /// Native Join Lines preserves Insert mode and joins all selected lines.
+    mutating func joinLines(storage: NSString, selection: NSRange) -> VimEffect {
+        let b = buffer(for: storage)
+        defer { b.endCommand() }
+        let first = b.lineNumber(at: b.offset(selection.location))
+        let last = b.lineNumber(at: b.offset(selection.location + max(0, selection.length - 1)))
+        reset(mode: mode == .insert ? .insert : .normal)
+        return joinLines(b: b, first: first, last: max(first + 1, last))
     }
 
     var canApplyNormalMapping: Bool { mode == .normal && operation == nil && !awaitingG }
@@ -204,6 +218,10 @@ struct VimEngine {
             _ = lineOperation("y", b: b, first: b.lineNumber(at: i), last: b.lineNumber(at: i) + count - 1)
             return .move(b.offset(i))
         case "p", "P": return paste(b: b, i: i, after: key == "p", count: count)
+        case "J":
+            let first = b.lineNumber(at: i)
+            if count > 2, first == b.lines.count - 1 { return .move(b.lines[first].start) }
+            return joinLines(b: b, first: first, last: first + max(2, count) - 1)
         case "u": return .undo
         case "<C-r>": return .redo
         default: return .handled
@@ -229,6 +247,14 @@ struct VimEngine {
             desiredColumn = nil
             clearPending()
             return visualSelection(b)
+        }
+        if key == "J" {
+            let first = min(b.lineNumber(at: anchor), b.lineNumber(at: head))
+            let last = max(b.lineNumber(at: anchor), b.lineNumber(at: head))
+            let fallback = mode == .visualLine ? b.lines[first].start : b.normal(min(anchor, head))
+            reset(mode: .normal)
+            if first == b.lines.count - 1 { return .move(fallback) }
+            return joinLines(b: b, first: first, last: max(first + 1, last))
         }
         if ["d", "x", "c", "y"].contains(key) {
             let linewise = mode == .visualLine
@@ -455,6 +481,32 @@ struct VimEngine {
         let inserted = Buffer(content)
         let lastOffset = inserted.previous(inserted.length)
         return .edit(range: b.range(at, at), replacement: content, caret: b.offset(at) + lastOffset)
+    }
+
+    private func joinLines(b: Buffer, first: Int, last: Int) -> VimEffect {
+        let last = min(last, b.lines.count - 1)
+        guard last > first else { return .handled }
+        let start = b.lines[first].start
+        var joined = b.substring(start, b.lines[first].end)
+        var joinedLength = joined.utf16.count
+        var caret = 0
+        for number in (first + 1)...last {
+            let line = b.lines[number]
+            let next = b.substring(line.start, line.end).drop(while: { $0 == " " || $0 == "\t" })
+            caret = joinedLength
+            if !joined.isEmpty, !next.isEmpty, joined.last != " ", joined.last != "\t", next.first != ")" {
+                joined += " "
+                joinedLength += 1
+            }
+            joined += next
+            joinedLength += next.utf16.count
+        }
+        // Clamp to a whole grapheme, including when the final joined line is empty.
+        let text = joined as NSString
+        if text.length > 0 {
+            caret = text.rangeOfComposedCharacterSequence(at: min(caret, text.length - 1)).location
+        }
+        return .edit(range: b.range(start, b.lines[last].end), replacement: joined, caret: start + caret)
     }
 
     /// Positions are native UTF-16 offsets. Only line metadata is collected up

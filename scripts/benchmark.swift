@@ -533,7 +533,7 @@ func conformance(_ args: Arguments) throws {
         "h", "j", "k", "l", "0", "^", "$", "gg", "G", "w", "b", "e", "W", "B", "E",
         "2w", "2e", "x", "X", "dd", "cc", "yy", "dw", "cw", "yw", "db", "yb", "de",
         "ce", "d$", "dj", "dk", "dG", "dgg", "2dd", "d2w", "c2w", "y2w", "D", "C",
-        "Y", "yj", "yk", "yG", "ygg", "d0", "d^", "dh", "dl", "d2j", "3dd", "2cc",
+        "Y", "J", "1J", "3J", "9J", "vJ", "vjJ", "VjJ", "vkJ", "yj", "yk", "yG", "ygg", "d0", "d^", "dh", "dl", "d2j", "3dd", "2cc",
         "2yy", "yyp", "yyP", "ylp", "ylP", "vy", "vly", "vhy", "vwy", "vey", "vby", "v0y", "v$y", "vjy", "vky",
         "vggd", "vGd", "v2ld", "vhd", "vjc", "vody", "Vd", "Vjd", "Vkd", "Vy", "Vjy", "Vky", "Vc", "Vjc", "vVjd", "Vvld"
     ]

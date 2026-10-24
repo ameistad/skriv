@@ -23,5 +23,5 @@ struct EditorSettings: Equatable, Sendable {
     var normalKeyMappings: [String: String] = [:]
 
     // Standalone native commands and operators; sequences and scripts aren't supported.
-    static let supportedNormalTargets = Set("hjklwbeWBE0$^iaIAoOxXpPuDCYGdcyvVnN/?:".map(String.init))
+    static let supportedNormalTargets = Set("hjklwbeWBE0$^iaIAoOxXpPuDCYJGdcyvVnN/?:".map(String.init))
 }

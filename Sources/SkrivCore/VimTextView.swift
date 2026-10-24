@@ -255,6 +255,23 @@ final class VimTextView: NSTextView {
     @objc func shiftRight(_ sender: Any?) { shiftIndent(right: true) }
     @objc func shiftLeft(_ sender: Any?) { shiftIndent(right: false) }
 
+    @objc func joinLines(_ sender: Any?) {
+        guard isEditable, !hasMarkedText() else { return }
+        observeCommandStorage()
+        guard let storage = textStorage else { return }
+        let oldMode = engine.mode
+        let effect = engine.joinLines(storage: storage.mutableString, selection: selectedRange())
+        if case .edit(let range, let replacement, let caret) = effect {
+            breakUndoCoalescing()
+            insertText(replacement, replacementRange: range)
+            setSelectedRange(NSRange(location: caret, length: 0))
+            breakUndoCoalescing()
+            scrollRangeToVisible(selectedRange())
+        }
+        if oldMode != engine.mode { onModeChange?(engine.mode.label) }
+        enclosingScrollView?.verticalRulerView?.needsDisplay = true
+    }
+
     private func shiftIndent(right: Bool) {
         guard !hasMarkedText() else { return }
         let text = string as NSString

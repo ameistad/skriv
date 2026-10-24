@@ -157,6 +157,7 @@ and joined emoji.
 | First / last / numbered line | `gg`, `G`, `12gg`, `12G` |
 | Enter Insert mode | `i a I A` |
 | Open line below / above | `o O` |
+| Join next / selected lines | `J` (`Shift+J`), `3J`; native `⌘J` |
 | Delete / change / yank with a motion | `d`, `c`, `y` followed by a supported motion |
 | Whole lines | `dd cc yy`, `Y` |
 | Delete characters / through end of line | `x X`, `D C` |
@@ -175,6 +176,11 @@ Yank/delete/change share the native clipboard. Linewise clipboard metadata is
 preserved between Skriv documents; text copied from another app pastes characterwise.
 **Edit → Shift Right / Shift Left** (`⌘]` / `⌘[`) use the configured
 `indent-width`. `Tab` follows `expand-tabs` and `tab-width` using native font geometry.
+**Edit → Join Lines** (`⌘J`) also works in Insert mode. Joining removes the line
+break and the next line's leading spaces/tabs, adding a space unless one already
+exists, either side is empty, or the next text starts with `)`. Counts join that
+many lines (at least two); Visual selections join the highlighted lines. The
+caret moves to the final join, and the edit supports native undo.
 
 Visual selections include whole graphemes and line separators. `v`/`V` switch
 selection type; repeating the current type or pressing `Esc` returns to Normal.
@@ -309,7 +315,7 @@ keybind = L=l
 
 Remaps are applied once, only in Normal mode outside an operator-pending command.
 They do not affect Insert or Visual mode, native Command shortcuts, or count keys.
-Targets are `h j k l w b e W B E 0 $ ^ i a I A o O x X p P u D C Y G d c y v V n N / ? :`.
+Targets are `h j k l w b e W B E 0 $ ^ i a I A o O x X p P u D C Y J G d c y v V n N / ? :`.
 Key sequences, callbacks, and plugin commands are not supported.
 The `global-shortcut` setting has been removed. Delete or comment out any existing
 entry, including `none` or an empty value, then save and reload. An uncommented

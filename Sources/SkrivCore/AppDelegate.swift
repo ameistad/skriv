@@ -135,6 +135,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         edit.addItem(.separator())
         edit.addItem(withTitle: "Shift Right", action: #selector(VimTextView.shiftRight(_:)), keyEquivalent: "]")
         edit.addItem(withTitle: "Shift Left", action: #selector(VimTextView.shiftLeft(_:)), keyEquivalent: "[")
+        edit.addItem(withTitle: "Join Lines", action: #selector(VimTextView.joinLines(_:)), keyEquivalent: "j")
         edit.addItem(.separator())
         let find = submenu("Find", in: edit)
         for (title, action, key, shift) in [
