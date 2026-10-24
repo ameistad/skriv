@@ -1,0 +1,10 @@
+#compdef skriv
+
+# _files also offers directories and falls back to all files. Use _path_files
+# directly so document arguments only offer regular files (including symlinks).
+_arguments -s \
+  '(- *)'{-h,--help}'[Show help]' \
+  '(- *)'{-v,--version}'[Show the app version]' \
+  '(- *)--install[Install the launcher]:installation directory:_directories' \
+  '(- *)--install-completion[Install zsh completion]:completion directory:_directories' \
+  '*:file:_path_files -g "*(-.)"'

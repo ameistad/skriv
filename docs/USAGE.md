@@ -106,9 +106,41 @@ paths, stdin, and editor flags such as `--wait` or `--goto` are not supported.
 Argument errors exit nonzero before opening any files; encoding/read errors
 encountered by the app appear in its native error dialog.
 
+### Zsh completion
+
+Install the bundled completion rule with:
+
+```sh
+skriv --install-completion
+```
+
+This links `_skriv` into `~/.local/share/zsh/site-functions`. You can supply a
+different completion directory as an argument. The installer refuses to overwrite
+an existing, different file or symlink and does not edit your shell configuration.
+If the directory is not already in zsh's `fpath`, add this before your existing
+`compinit` call in `~/.zshrc`:
+
+```zsh
+fpath=(~/.local/share/zsh/site-functions $fpath)
+```
+
+If you do not already initialize zsh completion, follow that line with
+`autoload -Uz compinit` and `compinit`. In an already initialized shell, load the
+new rule immediately with `autoload -Uz _skriv; compdef _skriv skriv`.
+If your setup caches completion registrations, rebuild its completion cache so
+future shells discover the new rule too.
+
+Tab completion for document arguments offers regular files and symlinks to files,
+without directories or a directory fallback when no files match. Type directory
+prefixes yourself, for example `skriv docs/` followed by Tab. Options are completed
+too; `--install` and `--install-completion` accept directory completions.
+Other commands keep their existing completion behavior.
+
 Rebuilding the app at the same location keeps the command working. If you move
-the app, remove the old symlink and run `--install` from the new location.
-To uninstall the default link, run `rm ~/.local/bin/skriv`.
+the app, remove the old symlinks and rerun the installers from the new location.
+To uninstall the default links, run
+`rm ~/.local/bin/skriv ~/.local/share/zsh/site-functions/_skriv` (omit the completion
+path if you did not install it).
 
 ## Vim subset
 

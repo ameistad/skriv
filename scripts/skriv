@@ -5,6 +5,7 @@ usage() {
     cat <<'EOF'
 Usage: skriv [--] [file ...]
        skriv --install [directory]
+       skriv --install-completion [directory]
 
 Open UTF-8 files in Skriv, reusing the running app and any existing tabs.
 With no files, launch or bring Skriv forward. Paths are relative to the
@@ -15,6 +16,9 @@ Options:
   -h, --help       Show this help.
   -v, --version    Show the app version.
   --install       Link this launcher into ~/.local/bin, or the given directory.
+  --install-completion
+                  Link zsh completion into ~/.local/share/zsh/site-functions,
+                  or the given directory. Add it to zsh's fpath before compinit.
 EOF
 }
 
@@ -47,15 +51,23 @@ fi
 [[ -x "$app_path/Contents/MacOS/Skriv" ]] || fail "Skriv.app was not found at $app_path. Build the app first, or reinstall the launcher from its new location."
 
 case "${1:-}" in
-    --install)
-        [[ $# -le 2 ]] || fail "Usage: skriv --install [directory]"
-        install_directory="${2:-$HOME/.local/bin}"
+    --install|--install-completion)
+        [[ $# -le 2 ]] || fail "Usage: skriv $1 [directory]"
+        if [[ "$1" == --install-completion ]]; then
+            install_directory="${2:-$HOME/.local/share/zsh/site-functions}"
+            name="_skriv"
+            target="$app_path/Contents/Resources/completions/_skriv"
+            [[ -r "$target" ]] || fail "The app has no bundled zsh completion. Rebuild it first."
+        else
+            install_directory="${2:-$HOME/.local/bin}"
+            name="skriv"
+            # Install the bundled copy even when invoked from the source checkout.
+            target="$app_path/Contents/Resources/bin/skriv"
+            [[ -x "$target" ]] || fail "The app has no bundled launcher. Rebuild it first."
+        fi
         mkdir -p -- "$install_directory"
         install_directory="$(cd "$install_directory" && pwd -P)"
-        destination="$install_directory/skriv"
-        # Install the bundled copy even when invoked from the source checkout.
-        target="$app_path/Contents/Resources/bin/skriv"
-        [[ -x "$target" ]] || fail "The app has no bundled launcher. Rebuild it first."
+        destination="$install_directory/$name"
         if [[ -L "$destination" && "$(readlink "$destination")" == "$target" ]]; then
             printf 'Already installed: %s\n' "$destination"
         else
@@ -63,10 +75,15 @@ case "${1:-}" in
             ln -s "$target" "$destination"
             printf 'Installed: %s\n' "$destination"
         fi
-        case ":$PATH:" in
-            *":$install_directory:"*) ;;
-            *) printf 'Add this directory to your shell PATH: %s\n' "$install_directory" ;;
-        esac
+        if [[ "$1" == --install-completion ]]; then
+            printf 'Include this directory in zsh fpath before compinit: %s\n' "$install_directory"
+            printf 'To enable in an initialized zsh now: autoload -Uz _skriv; compdef _skriv skriv\n'
+        else
+            case ":$PATH:" in
+                *":$install_directory:"*) ;;
+                *) printf 'Add this directory to your shell PATH: %s\n' "$install_directory" ;;
+            esac
+        fi
         exit 0
         ;;
     -v|--version)
