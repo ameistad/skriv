@@ -197,6 +197,7 @@ struct NativeEditorTests {
         let (document, controller) = try editor()
         defer { document.close() }
         let view = controller.textView
+        view.handleVimKey("i")
         edit(document) {
             view.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0),
                                replacementRange: NSRange(location: 0, length: 0))
@@ -241,6 +242,7 @@ struct NativeEditorTests {
             defer { document.close() }
             let view = controller.textView
             view.normalKeyMappings = ["w": "l"]
+            view.handleVimKey("i")
             #expect(!view.handleVimKey("w"))
             edit(document) { view.insertText("one two", replacementRange: NSRange(location: 0, length: 0)) }
             view.handleVimKey("<Esc>")

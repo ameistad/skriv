@@ -52,7 +52,7 @@ struct VimEngine {
         var text: String
         var linewise: Bool
     }
-    private(set) var mode: Mode = .insert
+    private(set) var mode: Mode = .normal
     private(set) var register = Register(text: "", linewise: false)
     private(set) var registerGeneration: UInt = 0
     private var pendingCount: Int?
@@ -127,7 +127,7 @@ struct VimEngine {
 
     var canApplyNormalMapping: Bool { mode == .normal && operation == nil && !awaitingG }
 
-    mutating func reset(mode: Mode = .insert) {
+    mutating func reset(mode: Mode = .normal) {
         self.mode = mode
         clearPending()
         desiredColumn = nil

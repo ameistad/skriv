@@ -30,8 +30,8 @@ The source mark is from [Streamline](https://streamlinehq.com).
 - Documents remember the most recently moved, resized, or closed window's size and
   position, including across app launches. Without a saved layout, a document opens
   maximized on the display containing the pointer. Full-screen transitions preserve
-  the regular window layout. Documents open focused and ready to type in **INSERT**
-  mode. The mode is shown at the bottom.
+  the regular window layout. Documents open focused in **NORMAL** mode. Press `i`
+  to start typing and `Esc` to return to Normal mode. The mode is shown at the bottom.
 - Dark appearance and the built-in Etterglød (`etterglod.nvim`) plain-text
   palette are the defaults, independently of macOS appearance.
 - Writing uses a left-aligned column capped at approximately 72 characters in the

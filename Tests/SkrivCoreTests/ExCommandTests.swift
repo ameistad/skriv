@@ -20,6 +20,7 @@ struct ExCommandTests {
 
     @Test func colonIsANormalCommandAndDoesNotLeakPendingState() {
         var engine = VimEngine()
+        _ = engine.handle("i", text: "abc", caret: 0)
         #expect(engine.handle(":", text: "abc", caret: 0) == .passThrough)
         engine.reset(mode: .normal)
         #expect(engine.handle(":", text: "abc", caret: 0) == .beginCommand)

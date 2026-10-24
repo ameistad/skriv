@@ -69,6 +69,9 @@ struct DocumentTabTests {
         let secondController = try controller(second)
         let firstView = firstController.textView
         let secondView = secondController.textView
+        #expect(firstView.engine.mode == .normal)
+        #expect(secondView.engine.mode == .normal)
+        secondView.handleVimKey("i")
         first.undoManager?.groupsByEvent = false
         first.undoManager?.beginUndoGrouping()
         firstView.insertText("one two one", replacementRange: NSRange(location: 0, length: 0))

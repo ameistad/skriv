@@ -8,7 +8,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
     private(set) var isClosing = false
     let textView: VimTextView
     private let scrollView: NSScrollView
-    private let modeLabel = NSTextField(labelWithString: "INSERT")
+    private let modeLabel = NSTextField(labelWithString: "")
     private let tabShortcutLabel = NSTextField(labelWithString: "")
     private(set) var markdownHighlighter: MarkdownHighlighter?
     private weak var highlightingDocument: SkrivDocument?
@@ -98,6 +98,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         let content = NSView(frame: window.contentView!.bounds)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         modeLabel.translatesAutoresizingMaskIntoConstraints = false
+        modeLabel.stringValue = textView.engine.mode.label
         modeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
         modeLabel.textColor = .secondaryLabelColor
         modeLabel.setAccessibilityLabel("Editing mode")

@@ -28,14 +28,20 @@ struct VimEngineTests {
         mutating func keys(_ keys: String) { for key in keys { self.key(String(key)) } }
     }
 
-    @Test func initialInsertAndEscapeAreGraphemeSafe() {
+    @Test func initialNormalModeAndInsertEscapeAreGraphemeSafe() {
         var engine = VimEngine()
+        #expect(engine.mode == .normal)
+        #expect(engine.handle("l", text: "hello", caret: 0) == .move(1))
+        #expect(engine.handle("i", text: "hello", caret: 1) == .move(1))
         #expect(engine.mode == .insert)
         #expect(engine.handle("x", text: "hello", caret: 5) == .passThrough)
         let text = "A👩🏽‍💻"
         #expect(engine.handle("<Esc>", text: text, caret: text.utf16.count) == .move(1))
         #expect(engine.mode == .normal)
         #expect(engine.handle("<Esc>", text: "a\nb", caret: 2) == .move(2))
+        engine.reset(mode: .insert)
+        engine.reset()
+        #expect(engine.mode == .normal)
     }
 
     @Test func unicodeHorizontalMovementAndDeletion() {
