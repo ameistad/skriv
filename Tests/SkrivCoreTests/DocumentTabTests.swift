@@ -308,6 +308,68 @@ struct DocumentTabTests {
         #expect(text.isDocumentEdited)
     }
 
+    @Test func openingAFileReplacesTheAutomaticEmptyDocumentBeforeQuit() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
+        try "Saved file".write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let initial = try #require(documents.openInitialDocument())
+        defer { initial.close() }
+        let (opened, _) = try await documents.openDocument(withContentsOf: url, display: true)
+        defer { opened.close() }
+        #expect(initial.windowControllers.isEmpty)
+        #expect(!documents.documents.contains { $0 === initial })
+        #expect(try window(opened).tabGroup?.windows.count == 1)
+        #expect(try window(opened).isVisible)
+        try controller(opened).executeCommand("q")
+        #expect(opened.windowControllers.isEmpty)
+        #expect(initial.windowControllers.isEmpty)
+    }
+
+    @Test func openingAFilePreservesAnEditedInitialDocumentAndExplicitEmptyTabs() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
+        try "Saved file".write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let initial = try #require(documents.openInitialDocument() as? SkrivDocument)
+        defer { initial.close() }
+        initial.textStorage.mutableString.setString("Keep this draft")
+        initial.updateChangeCount(.changeDone)
+        let explicit = try newDocument(in: TabDestination(window: try window(initial)))
+        defer { explicit.close() }
+        let (opened, _) = try await documents.openDocument(withContentsOf: url, display: true)
+        defer { opened.close() }
+        try controller(opened).executeCommand("q")
+        #expect(!initial.windowControllers.isEmpty)
+        #expect(initial.textStorage.string == "Keep this draft")
+        #expect(initial.isDocumentEdited)
+        #expect(!explicit.windowControllers.isEmpty)
+    }
+
+    @Test func failedOpenKeepsTheInitialDocumentAndBatchOpenReplacesItOnlyOnce() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let initial = try #require(documents.openInitialDocument())
+        defer { initial.close() }
+        do {
+            _ = try await documents.openDocument(withContentsOf: directory.appendingPathComponent("missing.txt"), display: true)
+            Issue.record("Opening a missing file should fail")
+        } catch {}
+        #expect(!initial.windowControllers.isEmpty)
+        let urls = ["one.txt", "two.txt"].map { directory.appendingPathComponent($0) }
+        for url in urls { try "Saved file".write(to: url, atomically: true, encoding: .utf8) }
+        try window(initial).makeKeyAndOrderFront(nil)
+        let succeeded = await withCheckedContinuation { continuation in
+            documents.openDocuments(at: urls) { continuation.resume(returning: $0) }
+        }
+        let opened = urls.compactMap { documents.document(for: $0) }
+        defer { opened.forEach { $0.close() } }
+        #expect(succeeded)
+        #expect(initial.windowControllers.isEmpty)
+        #expect(opened.count == 2)
+        let windows = try opened.map(window)
+        #expect(windows.first?.tabGroup?.windows == windows)
+    }
+
     @Test func configurationUsesTabsAndReusesTheOriginalTab() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".skriv")
         try "font-size = 18".write(to: url, atomically: true, encoding: .utf8)

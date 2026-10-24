@@ -4,6 +4,7 @@ import AppKit
 final class SkrivDocumentController: NSDocumentController {
     /// Applied to every new document; nil means the built-in editor settings.
     var currentSettings: EditorSettings?
+    private weak var initialDocument: SkrivDocument?
 
     override init() {
         super.init()
@@ -29,6 +30,33 @@ final class SkrivDocumentController: NSDocumentController {
         let document = try super.openUntitledDocumentAndDisplay(false)
         if displayDocument { present(document, in: destination) }
         return document
+    }
+
+    /// Only the automatic launch/reopen document is a replaceable placeholder.
+    /// Explicit New Tab and New Window documents always belong to the user.
+    @discardableResult
+    func openInitialDocument() -> NSDocument? {
+        do {
+            let document = try super.openUntitledDocumentAndDisplay(false)
+            initialDocument = document as? SkrivDocument
+            present(document, in: TabDestination(window: activeDocumentWindow))
+            return document
+        } catch {
+            presentError(error)
+            return nil
+        }
+    }
+
+    private func closeUnusedInitialDocument(afterOpening document: NSDocument) {
+        guard let initial = initialDocument else { return }
+        initialDocument = nil
+        guard initial !== document, initial.fileURL == nil, !initial.isDocumentEdited,
+              initial.textStorage.length == 0,
+              initial.undoManager?.canUndo != true, initial.undoManager?.canRedo != true,
+              !initial.windowControllers.contains(where: { $0.window?.attachedSheet != nil }) else { return }
+        // Present the real document first so replacing the last placeholder
+        // never temporarily leaves the application without a window.
+        initial.close()
     }
 
     @objc func newWindowForTab(_ sender: Any?) {
@@ -94,7 +122,10 @@ final class SkrivDocumentController: NSDocumentController {
     private func openDocument(at url: URL, in destination: TabDestination,
                               completionHandler: @escaping (NSDocument?, Bool, Error?) -> Void) {
         super.openDocument(withContentsOf: url, display: false) { [self] document, alreadyOpen, error in
-            if let document { present(document, in: destination) }
+            if let document {
+                present(document, in: destination)
+                closeUnusedInitialDocument(afterOpening: document)
+            }
             completionHandler(document, alreadyOpen, error)
         }
     }
@@ -129,12 +160,14 @@ final class SkrivDocumentController: NSDocumentController {
     func openConfiguration(at url: URL) throws {
         if let existing = document(for: url) {
             present(existing, in: TabDestination(window: activeDocumentWindow))
+            closeUnusedInitialDocument(afterOpening: existing)
             return
         }
         let destination = TabDestination(window: activeDocumentWindow)
         let document = try SkrivDocument(contentsOf: url, ofType: SkrivDocument.configurationTypeName)
         addDocument(document)
         present(document, in: destination)
+        closeUnusedInitialDocument(afterOpening: document)
     }
 
     override var defaultType: String? { SkrivDocument.typeName }

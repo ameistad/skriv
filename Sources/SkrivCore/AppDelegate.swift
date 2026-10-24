@@ -22,7 +22,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         NSApp.mainMenu = makeMenu()
         LaunchMetrics.shared.markStartupCheckpoint("menu")
         if documents.documents.isEmpty {
-            documents.newDocument(nil)
+            documents.openInitialDocument()
         }
         NSApp.activate(ignoringOtherApps: true)
         if let error = startupConfigurationError {
@@ -55,7 +55,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func newDocument() {
         LaunchMetrics.shared.begin(.warmInvocation)
         NSApp.activate(ignoringOtherApps: true)
-        documents.newDocument(nil)
+        documents.openInitialDocument()
     }
 
     private func loadConfiguration() throws {

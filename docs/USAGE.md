@@ -53,6 +53,8 @@ The source mark is from [Streamline](https://streamlinehq.com).
   a window if none is open. Opening an already-open file selects its existing tab
   in its original window, preserving unsaved changes. `⌘S` saves; `⇧⌘S` saves under
   a new name. Unsupported encodings produce an error rather than replacing text.
+  Successfully opening a file replaces the untouched empty document created at launch.
+  Edited drafts and explicitly created tabs stay open.
 - `⌘W` and a tab’s close button close that document, protecting unsaved changes with a native prompt.
   Edited documents offer **Save**, **Cancel**, and **Don’t Save** (`⌘D`). The save panel
   appears only after choosing Save; Don’t Save never deletes an existing file.
