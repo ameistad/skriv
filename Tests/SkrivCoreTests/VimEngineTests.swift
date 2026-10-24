@@ -66,6 +66,33 @@ struct VimEngineTests {
         #expect(s.caret == s.text.utf16.count - 1)
     }
 
+    @Test func verticalMovementFromEmptyLineStartsAtFirstCharacter() {
+        for newline in ["\n", "\r\n"] {
+            var s = Session(newline + "👩🏽‍💻text" + newline + newline + "more")
+            s.keys("j")
+            #expect(s.caret == newline.utf16.count)
+            s.keys("jj")
+            #expect(s.caret == (newline + "👩🏽‍💻text" + newline + newline).utf16.count)
+            s.keys("kk")
+            #expect(s.caret == newline.utf16.count)
+        }
+    }
+
+    @Test func arrowsAndVimMotionsShareRememberedColumnAcrossEmptyLines() {
+        var s = Session("\nlonger text\n\nshort", caret: 6)
+        s.key("<Up>")
+        #expect(s.caret == 0)
+        s.key("j")
+        #expect(s.caret == 6)
+        s.keys("$j")
+        #expect(s.caret == 13)
+        s.key("<Down>")
+        #expect(s.caret == s.text.utf16.count - 1)
+        s.key("<Up>")
+        s.key("k")
+        #expect(s.caret == 11)
+    }
+
     @Test func motionsCountsAndPunctuation() {
         var s = Session("one.two three four")
         s.keys("w")

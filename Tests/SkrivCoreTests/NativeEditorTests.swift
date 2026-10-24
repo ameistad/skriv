@@ -39,6 +39,24 @@ struct NativeEditorTests {
         try body()
     }
 
+    @Test func verticalMovementUsesNewColumnAfterNativeCursorMovement() throws {
+        let (document, controller) = try editor()
+        defer { document.close() }
+        let view = controller.textView
+        document.textStorage.mutableString.setString("\ntext below\nlast line")
+        view.setSelectedRange(NSRange(location: 1, length: 0))
+        view.handleVimKey("$")
+        #expect(view.selectedRange().location == 10)
+
+        // Native navigation can reposition the caret without a Vim key or mouse click.
+        view.moveToBeginningOfDocument(nil)
+        #expect(view.selectedRange().location == 0)
+        view.handleVimKey("j")
+        #expect(view.selectedRange().location == 1)
+        view.handleVimKey("j")
+        #expect(view.selectedRange().location == 12)
+    }
+
     @Test func commandSnapshotTracksDirectStorageEditsAndSearchOffsets() throws {
         let (document, controller) = try editor()
         defer { document.close() }

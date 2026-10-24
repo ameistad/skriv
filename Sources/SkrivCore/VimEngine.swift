@@ -61,6 +61,7 @@ struct VimEngine {
     private var operationHasCount = false
     private var awaitingG = false
     private var desiredColumn: Int?
+    private var desiredColumnCaret: Int?
     private var visualAnchor = 0
     private var visualCaret = 0
     /// The active end can differ from the lower bound of the native selection.
@@ -322,7 +323,9 @@ struct VimEngine {
         var target = i
         var inclusive = false
         var linewise = false
-        if key != "j" && key != "k" { desiredColumn = nil }
+        // Native navigation can move the caret without passing through the engine.
+        // Only reuse the column while continuing from our previous motion.
+        if (key != "j" && key != "k") || i != desiredColumnCaret { desiredColumn = nil }
         switch key {
         case "h": target = max(line.start, b.advance(i, by: -total))
         case "l": target = min(line.end, b.advance(i, by: total))
@@ -354,7 +357,11 @@ struct VimEngine {
         default: break
         }
         clearPending()
-        guard let op else { return .move(b.offset(visual ? target : b.normal(target))) }
+        guard let op else {
+            let caret = b.offset(visual ? target : b.normal(target))
+            desiredColumnCaret = caret
+            return .move(caret)
+        }
         desiredColumn = nil
         if linewise {
             let effect = lineOperation(op, b: b, first: min(lineIndex, b.lineNumber(at: target)), last: max(lineIndex, b.lineNumber(at: target)))
