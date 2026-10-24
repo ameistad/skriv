@@ -24,7 +24,6 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         case command
     }
     private var prompt: Prompt = .command
-    private var promptSubmit: NSButton?
     private var closeAfterCommandSave: Bool?
     private var launchMeasurement: LaunchMetrics.Opening?
     var isOpeningComplete: Bool { launchMeasurement?.isFinished ?? true }
@@ -275,55 +274,57 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
             let bar = NSView()
             let field = NSTextField()
             let direction = NSTextField(labelWithString: "/")
-            let submit = NSButton(title: "Find", target: self, action: #selector(submitPrompt(_:)))
-            let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelPrompt(_:)))
+            field.isBordered = false
+            field.isBezeled = false
+            field.drawsBackground = false
+            field.focusRingType = .none
+            field.usesSingleLineMode = true
             field.target = self
             field.action = #selector(submitPrompt(_:))
             field.delegate = self
-            for view in [direction, field, submit, cancel] {
+            direction.setContentHuggingPriority(.required, for: .horizontal)
+            direction.setContentCompressionResistancePriority(.required, for: .horizontal)
+            for view in [direction, field] {
                 view.translatesAutoresizingMaskIntoConstraints = false
                 bar.addSubview(view)
-                view.centerYAnchor.constraint(equalTo: bar.centerYAnchor).isActive = true
             }
             bar.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(bar)
             NSLayoutConstraint.activate([
                 bar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
                 bar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-                bar.bottomAnchor.constraint(equalTo: modeLabel.topAnchor, constant: -5),
-                bar.heightAnchor.constraint(equalToConstant: 34),
+                bar.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -5),
+                bar.heightAnchor.constraint(greaterThanOrEqualToConstant: 20),
                 direction.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-                direction.widthAnchor.constraint(equalToConstant: 16),
-                field.leadingAnchor.constraint(equalTo: direction.trailingAnchor, constant: 4),
-                field.trailingAnchor.constraint(equalTo: submit.leadingAnchor, constant: -8),
-                submit.trailingAnchor.constraint(equalTo: cancel.leadingAnchor, constant: -8),
-                cancel.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+                direction.firstBaselineAnchor.constraint(equalTo: field.firstBaselineAnchor),
+                field.leadingAnchor.constraint(equalTo: direction.trailingAnchor),
+                field.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+                field.topAnchor.constraint(equalTo: bar.topAnchor, constant: 2),
+                field.bottomAnchor.constraint(equalTo: bar.bottomAnchor, constant: -2),
             ])
             promptBottom = scrollView.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -4)
             promptBar = bar
             promptField = field
             promptLabel = direction
-            promptSubmit = submit
         }
+        updatePromptAppearance()
         self.prompt = prompt
         switch prompt {
         case .search(let forward, _):
             promptLabel?.stringValue = forward ? "/" : "?"
-            promptField?.placeholderString = "Find literal text"
             promptField?.setAccessibilityLabel("Vim literal search")
-            promptSubmit?.title = "Find"
         case .command:
             promptLabel?.stringValue = ":"
-            promptField?.placeholderString = "w, q, wq, x, q!"
             promptField?.setAccessibilityLabel("Vim command")
-            promptSubmit?.title = "Run"
         }
         modeLabel.stringValue = textView.engine.mode.label
         promptField?.stringValue = ""
         promptBar?.isHidden = false
+        modeLabel.isHidden = true
         editorBottom?.isActive = false
         promptBottom?.isActive = true
         window?.makeFirstResponder(promptField)
+        updatePromptAppearance()
     }
 
     @objc private func submitPrompt(_ sender: Any?) {
@@ -337,13 +338,36 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
     }
 
-    @objc private func cancelPrompt(_ sender: Any?) { closePrompt() }
-
     private func closePrompt() {
         promptBottom?.isActive = false
         editorBottom?.isActive = true
         promptBar?.isHidden = true
+        modeLabel.isHidden = false
         window?.makeFirstResponder(textView)
+    }
+
+    private func updatePromptAppearance() {
+        for field in [promptField, promptLabel] {
+            field?.font = textView.font
+            field?.textColor = textView.textColor
+        }
+        // AppKit uses a shared text view while editing a text field.
+        if let editor = promptField?.currentEditor() as? NSTextView {
+            editor.backgroundColor = textView.backgroundColor
+            editor.textColor = textView.textColor
+            editor.insertionPointColor = textView.insertionPointColor
+            editor.selectedTextAttributes = textView.selectedTextAttributes
+            editor.font = textView.font
+            editor.isAutomaticQuoteSubstitutionEnabled = false
+            editor.isAutomaticDashSubstitutionEnabled = false
+            editor.isAutomaticTextReplacementEnabled = false
+            editor.isAutomaticSpellingCorrectionEnabled = false
+            editor.isContinuousSpellCheckingEnabled = false
+        }
+    }
+
+    func controlTextDidBeginEditing(_ notification: Notification) {
+        updatePromptAppearance()
     }
 
     func executeCommand(_ input: String) {
@@ -487,6 +511,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTe
         scrollView.rulersVisible = showNumbers
         textView.updateWritingLayout()
         textView.needsDisplay = true
+        updatePromptAppearance()
         updateMarkdownHighlighting()
     }
 

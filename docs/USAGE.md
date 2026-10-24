@@ -58,9 +58,9 @@ The source mark is from [Streamline](https://streamlinehq.com).
   appears only after choosing Save; Don’t Save never deletes an existing file.
   **File → Discard Changes…** discards changes after confirmation; it never deletes
   a previously saved file. `⌘Q` prompts for unsaved documents before quitting.
-- The app remains resident after all documents close. Reopening it from the Dock or
-  a launcher creates a document when no windows are visible; otherwise it brings
-  existing documents forward. Closing the last tab closes its window; no empty
+- Closing the last window quits the app. Opening it from the Dock or a launcher
+  creates a document on launch, or brings existing documents forward if it is
+  already running. Closing the last tab closes its window; no empty
   replacement document is created. Tabs are session-only: Skriv does not save a tab
   list or unsaved buffers for restoration after quitting.
 - Global shortcuts belong to your launcher, such as Alfred or Raycast. Skriv does
@@ -158,8 +158,8 @@ terminal display cells. Native input methods get first refusal while composing.
 
 ### Save and close commands
 
-In Normal mode, `:` opens the command field. Return runs the command; Escape or
-Cancel returns to the editor. Commands apply to the current document:
+In Normal mode, `:` opens a borderless command line at the bottom of the window.
+Return runs the command; Escape returns to the editor. Commands apply to the current document:
 
 | Command | Behavior |
 | --- | --- |
@@ -169,10 +169,11 @@ Cancel returns to the editor. Commands apply to the current document:
 | `:wq` | Save, then close only after a successful save. |
 | `:x`, `:xit`, `:exit` | Save if changed, then close; an unchanged document closes without writing. |
 
-Cancelled or failed saves leave the document open. Closing the last document leaves
-Skriv running, like `⌘W`; `⌘Q` quits the app. Filename arguments, ranges, counts,
-command chains, shell commands, and other Ex commands are not supported. Unsupported
-input shows a status message without saving, closing, or editing document text.
+Cancelled or failed saves leave the document open. Closing the last window quits
+Skriv, including with `:q` or `⌘W`; `⌘Q` quits with any number of windows open.
+Filename arguments, ranges, counts, command chains, shell commands, and other Ex
+commands are not supported. Unsupported input shows a status message without saving,
+closing, or editing document text.
 Command entry is supported in Normal mode, outside pending operators or counts.
 
 ## Find and replace
@@ -181,8 +182,8 @@ Command entry is supported in Normal mode, outside pending operators or counts.
 (`⇧⌘F`), next/previous match (`⌘G` / `⇧⌘G`), and Use Selection for Find (`⌘E`).
 Replacement edits use the document's native undo history.
 
-In Normal mode, `/` and `?` open a compact search field. Return searches;
-Escape or Cancel returns to the document without changing the search. Vim searches
+In Normal mode, `/` and `?` open a borderless search line. Return searches;
+Escape returns to the document without changing the search. Vim searches
 are case-sensitive literal text, preserve whole graphemes, and wrap with a
 status message. Empty input reuses the last query; `n` follows its original
 direction and `N` reverses it. Counts such as `3/` and `2n` select later matches.
@@ -288,7 +289,7 @@ third-party notices. Configuration ownership is recorded in [DATA-MODEL.md](../D
 ## Implementation phases
 
 1. **Native lifecycle — implemented:** maximized focused documents, native text and
-   undo, UTF-8 save/open, explicit discard, close/quit protection, resident reopen.
+   undo, UTF-8 save/open, explicit discard, close/quit protection, relaunch.
 2. **Vim editing — implemented for the documented subset:** independent command
    engine, grapheme-safe motions/operators/counts, native clipboard and undo.
 3. **Configuration — implemented:** Skriv-owned `config.skriv`, validated file
