@@ -4,12 +4,9 @@
 import os
 from pathlib import Path
 import plistlib
-import pty
-import select
 import shutil
 import subprocess
 import tempfile
-import time
 import unittest
 
 
@@ -25,9 +22,6 @@ class LauncherTests(unittest.TestCase):
         self.launcher = self.app / "Contents/Resources/bin/skriv"
         self.launcher.parent.mkdir(parents=True)
         shutil.copy2(LAUNCHER, self.launcher)
-        self.completion = self.app / "Contents/Resources/completions/_skriv"
-        self.completion.parent.mkdir()
-        shutil.copy2(LAUNCHER.with_name("_skriv"), self.completion)
         executable = self.app / "Contents/MacOS/Skriv"
         executable.parent.mkdir()
         executable.touch(mode=0o755)
@@ -115,108 +109,6 @@ class LauncherTests(unittest.TestCase):
                     self.assertTrue(destination.is_dir())
                 else:
                     self.assertEqual(os.readlink(destination), "missing")
-
-    def test_install_completion_default_custom_and_repeat(self):
-        for directory in [None, self.root / "custom completions"]:
-            arguments = [] if directory is None else [directory]
-            result = self.run_cli("--install-completion", *arguments)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            destination = (directory or self.root / ".local/share/zsh/site-functions") / "_skriv"
-            self.assertEqual(destination.resolve(), self.completion.resolve())
-            self.assertIn("Already installed", self.run_cli("--install-completion", *arguments).stdout)
-            self.assertFalse((self.root / ".zshrc").exists())
-            self.assertFalse(self.log.exists())
-
-    def test_completion_install_refuses_conflicts_and_missing_bundle_rule(self):
-        for kind in ["file", "directory", "broken-link"]:
-            directory = self.root / kind
-            directory.mkdir()
-            destination = directory / "_skriv"
-            if kind == "file":
-                destination.write_text("keep me")
-            elif kind == "directory":
-                destination.mkdir()
-            else:
-                destination.symlink_to("missing")
-            result = self.run_cli("--install-completion", directory)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("Refusing to replace", result.stderr)
-            if kind == "file":
-                self.assertEqual(destination.read_text(), "keep me")
-            elif kind == "directory":
-                self.assertTrue(destination.is_dir())
-            else:
-                self.assertEqual(os.readlink(destination), "missing")
-        self.completion.unlink()
-        self.assertNotEqual(self.run_cli("--install-completion").returncode, 0)
-        self.assertNotEqual(self.run_cli("--install-completion", "one", "two").returncode, 0)
-
-    @unittest.skipUnless(shutil.which("zsh"), "zsh is required for completion tests")
-    def test_real_zsh_tab_completion(self):
-        (self.root / "note.txt").touch()
-        (self.root / "notes-dir").mkdir()
-        (self.root / "notes-dir/nested.txt").touch()
-        (self.root / "space name.txt").touch()
-        (self.root / "file-link").symlink_to("note.txt")
-        (self.root / "dir-link").symlink_to("notes-dir")
-        (self.root / "--dash.txt").touch()
-        (self.root / ".hidden.txt").touch()
-        capture = self.root / "capture"
-        (self.root / ".zshrc").write_text('''
-fpath=("$COMPLETION_DIRECTORY" $fpath)
-autoload -Uz compinit
-compinit -D
-_capture() { print -rn -- "$BUFFER" > "$CAPTURE"; BUFFER=""; zle redisplay; }
-zle -N _capture
-bindkey '^X' _capture
-bindkey '^I' complete-word
-PS1='READY> '
-''')
-        master, slave = pty.openpty()
-        process = subprocess.Popen(
-            [shutil.which("zsh"), "-d", "-i"], stdin=slave, stdout=slave, stderr=slave,
-            cwd=self.root, env={**self.env, "ZDOTDIR": str(self.root), "TERM": "xterm",
-                               "COMPLETION_DIRECTORY": str(self.completion.parent),
-                               "CAPTURE": str(capture)})
-        os.close(slave)
-
-        def wait_for(predicate):
-            output = b""
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                if select.select([master], [], [], 0.05)[0]:
-                    output += os.read(master, 65536)
-                if predicate(output):
-                    return
-            self.fail(f"Timed out waiting for zsh: {output!r}")
-
-        try:
-            wait_for(lambda output: b"READY> " in output)
-            cases = {
-                "skriv no": "skriv note.txt ",
-                "skriv notes-d": "skriv notes-d",
-                "skriv notes-dir/ne": "skriv notes-dir/nested.txt ",
-                "skriv sp": "skriv space\\ name.txt ",
-                "skriv file-l": "skriv file-link ",
-                "skriv dir-l": "skriv dir-l",
-                "skriv note.txt sp": "skriv note.txt space\\ name.txt ",
-                "skriv -- --da": "skriv -- --dash.txt ",
-                "skriv .hi": "skriv .hidden.txt ",
-                "skriv --install notes-d": "skriv --install notes-dir/",
-                "skriv --install-completion notes-d": "skriv --install-completion notes-dir/",
-                "skriv --ver": "skriv --version ",
-                "cat notes-d": "cat notes-dir/",
-            }
-            for line, expected in cases.items():
-                with self.subTest(line=line):
-                    capture.unlink(missing_ok=True)
-                    os.write(master, (line + "\t\x18").encode())
-                    wait_for(lambda output: capture.exists() and capture.stat().st_size > 0)
-                    self.assertEqual(capture.read_text(), expected)
-        finally:
-            process.kill()
-            process.wait(timeout=5)
-            os.close(master)
 
     def test_help_version_and_missing_app(self):
         self.assertEqual(self.run_cli("--version").stdout, "Skriv 1.2.3\n")

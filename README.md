@@ -36,8 +36,6 @@ The installer links `skriv` into `~/.local/bin`; add that directory to your `PAT
 if needed. `skriv` alone launches or focuses the app. File arguments open existing
 UTF-8 files as tabs, reusing already-open documents. See [CLI usage](docs/USAGE.md#command-line)
 for installation in another directory and supported options.
-For file-only zsh tab completion, run `skriv --install-completion` and follow the
-[completion setup](docs/USAGE.md#zsh-completion).
 
 ## Basics
 
