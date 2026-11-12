@@ -120,6 +120,7 @@ and joined emoji.
 | Action | Keys |
 | --- | --- |
 | Character / line motion | `h j k l`, arrow keys |
+| Display-line motion in wrapped text | `gj gk`, `g↓ g↑`, `3gj` |
 | Word / whitespace-separated WORD motion | `w b e`, `W B E` |
 | Line positions | `0 ^ $` |
 | First / last / numbered line | `gg`, `G`, `12gg`, `12G` |
@@ -162,7 +163,8 @@ not implemented. Unsupported Normal-mode keys cancel pending commands without
 inserting text. Undo uses native AppKit groups, so a change operator and later
 inserted text may undo separately. `G`/`gg` and line deletion use first-nonblank
 positioning (Vim `startofline` behavior); vertical motions count graphemes, not
-terminal display cells. Native input methods get first refusal while composing.
+terminal display cells. `gj`/`gk` move by wrapped display line and keep the
+horizontal position; as operator motions (`dgj`) they are characterwise. Native input methods get first refusal while composing.
 
 ### Save and close commands
 

@@ -66,6 +66,11 @@ struct VimEngine {
     private var visualCaret = 0
     /// The active end can differ from the lower bound of the native selection.
     var activeVisualCaret: Int? { mode.isVisual ? visualCaret : nil }
+    /// Resolves `gj`/`gk` against the laid-out text: the offset `delta` display
+    /// lines from `position`. `allowLineEnd` permits resting on a line break.
+    typealias DisplayLineTarget = (_ position: Int, _ delta: Int, _ allowLineEnd: Bool) -> Int
+    // Only set while a key is being handled; the engine never retains the view.
+    private var displayLineTarget: DisplayLineTarget?
     // One disposable chunk index per editor, shared by Normal and Visual modes.
     // Native storage supplies edit deltas. Standalone immutable-string callers
     // use exact byte equality to protect UTF-16 offsets across normalization.
@@ -116,8 +121,11 @@ struct VimEngine {
 
     /// The caller must invalidate on storage replacement and deliver character
     /// edits via textDidChange. No whole-document Swift snapshot is required.
-    mutating func handle(_ key: String, storage: NSString, caret: Int) -> VimEffect {
+    mutating func handle(_ key: String, storage: NSString, caret: Int,
+                         displayLineTarget: DisplayLineTarget? = nil) -> VimEffect {
         guard mode != .insert || key == "<Esc>" else { return .passThrough }
+        self.displayLineTarget = displayLineTarget
+        defer { self.displayLineTarget = nil }
         return handle(key, buffer: buffer(for: storage), caret: caret)
     }
 
@@ -184,7 +192,8 @@ struct VimEngine {
             return op == "y" ? .move(b.offset(i)) : effect
         }
         if operation != nil { clearPending(); return .handled }
-        desiredColumn = nil
+        // Entering Visual keeps the remembered column, so `$vj` stays at line ends.
+        if key != "v" && key != "V" { desiredColumn = nil }
         switch key {
         case ":": return explicitCount ? .handled : .beginCommand
         case "v", "V":
@@ -298,8 +307,8 @@ struct VimEngine {
         let key = Self.arrowAliases[input] ?? input
         if awaitingG {
             awaitingG = false
-            guard key == "g" else { clearPending(); return .handled }
-            return executeMotion("gg", count: count, explicitCount: explicitCount, b: b, i: i, visual: visual)
+            guard key == "g" || key == "j" || key == "k" else { clearPending(); return .handled }
+            return executeMotion("g" + key, count: count, explicitCount: explicitCount, b: b, i: i, visual: visual)
         }
         if key == "g" {
             awaitingG = true
@@ -370,6 +379,17 @@ struct VimEngine {
             let destination = b.lines[next]
             target = b.position(in: destination, column: column, visual: visual)
             linewise = true
+        case "gj", "gk":
+            // Display-line motions are characterwise and exclusive, unlike j and k.
+            let delta = key == "gj" ? total : -total
+            if let displayLineTarget {
+                target = b.index(at: displayLineTarget(b.offset(i), delta, visual))
+            } else {
+                // Without layout, every logical line is a single display line.
+                let next = min(b.lines.count - 1, max(0, lineIndex + delta))
+                if next != lineIndex { target = b.position(in: b.lines[next], column: b.column(at: i), visual: visual) }
+            }
+            if op != nil && target == i { clearPending(); return .move(b.offset(i)) }
         case "G", "gg":
             let requested = (explicitCount || operationHasCount) ? total - 1 : (key == "G" ? b.lines.count - 1 : 0)
             target = b.firstNonblank(min(b.lines.count - 1, max(0, requested)))

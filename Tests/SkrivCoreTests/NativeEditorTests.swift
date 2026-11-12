@@ -57,6 +57,106 @@ struct NativeEditorTests {
         #expect(view.selectedRange().location == 12)
     }
 
+    /// Character ranges of the laid-out display lines, in document order.
+    private func displayRows(_ view: VimTextView) throws -> [NSRange] {
+        let layout = try #require(view.layoutManager)
+        var rows: [NSRange] = []
+        var glyph = 0
+        while glyph < layout.numberOfGlyphs {
+            var glyphs = NSRange()
+            layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &glyphs)
+            rows.append(layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil))
+            glyph = NSMaxRange(glyphs)
+        }
+        return rows
+    }
+
+    @Test func displayLineMotionsFollowWrappedRows() throws {
+        let (document, controller) = try editor()
+        defer { document.close() }
+        let view = controller.textView
+        view.wrapsToWritingColumn = true
+        view.writingWidth = 20
+        // Every row starts with the same words, so one column has one horizontal position.
+        let paragraph = Array(repeating: "word", count: 40).joined(separator: " ")
+        let tail = "\nab\nword word end"
+        document.textStorage.mutableString.setString(paragraph + tail)
+        let short = (paragraph as NSString).length + 1
+        let rows = try displayRows(view).filter { $0.location < short }
+        let lastRow = try #require(rows.last)
+        try #require(rows.count >= 4 && lastRow.length > 8)
+
+        // Normal mode keeps the horizontal position while moving through one paragraph.
+        view.setSelectedRange(NSRange(location: 6, length: 0))
+        view.handleVimKey("g")
+        view.handleVimKey("j")
+        #expect(view.selectedRange() == NSRange(location: rows[1].location + 6, length: 0))
+        view.handleVimKey("2")
+        view.handleVimKey("g")
+        view.handleVimKey("<Down>")
+        #expect(view.selectedRange() == NSRange(location: rows[3].location + 6, length: 0))
+        view.handleVimKey("g")
+        view.handleVimKey("k")
+        #expect(view.selectedRange() == NSRange(location: rows[2].location + 6, length: 0))
+        // Plain j still moves by logical line.
+        view.handleVimKey("j")
+        #expect(view.selectedRange().location == short + 1)
+
+        // A short row clamps the caret; the remembered position returns afterwards.
+        view.setSelectedRange(NSRange(location: lastRow.location + 6, length: 0))
+        view.handleVimKey("g")
+        view.handleVimKey("j")
+        #expect(view.selectedRange().location == short + 1)
+        view.handleVimKey("g")
+        view.handleVimKey("j")
+        #expect(view.selectedRange().location == short + 3 + 6)
+        view.handleVimKey("g")
+        view.handleVimKey("j")
+        #expect(view.selectedRange().location == short + 3 + 6)
+
+        // Visual mode selects through the character under the same position one row down.
+        view.setSelectedRange(NSRange(location: 6, length: 0))
+        view.handleVimKey("v")
+        view.handleVimKey("g")
+        view.handleVimKey("j")
+        #expect(view.selectedRange() == NSRange(location: 6, length: rows[1].location + 1))
+        #expect(view.engine.activeVisualCaret == rows[1].location + 6)
+        view.handleVimKey("g")
+        view.handleVimKey("k")
+        #expect(view.selectedRange() == NSRange(location: 6, length: 1))
+        view.handleVimKey("<Esc>")
+
+        // As an operator motion it is characterwise and exclusive.
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        edit(document) {
+            view.handleVimKey("d")
+            view.handleVimKey("g")
+            view.handleVimKey("j")
+        }
+        #expect(view.string == (paragraph as NSString).substring(from: rows[1].location) + tail)
+        #expect(view.selectedRange() == NSRange(location: 0, length: 0))
+    }
+
+    @Test func displayLineMotionsReachTheEmptyLastLine() throws {
+        let (document, controller) = try editor()
+        defer { document.close() }
+        let view = controller.textView
+        document.textStorage.mutableString.setString("abc\n")
+        view.setSelectedRange(NSRange(location: 2, length: 0))
+        view.handleVimKey("g")
+        view.handleVimKey("j")
+        #expect(view.selectedRange().location == 4)
+        view.handleVimKey("g")
+        view.handleVimKey("j")
+        #expect(view.selectedRange().location == 4)
+        view.handleVimKey("g")
+        view.handleVimKey("k")
+        #expect(view.selectedRange().location == 2)
+        view.handleVimKey("g")
+        view.handleVimKey("k")
+        #expect(view.selectedRange().location == 2)
+    }
+
     @Test func commandSnapshotTracksDirectStorageEditsAndSearchOffsets() throws {
         let (document, controller) = try editor()
         defer { document.close() }

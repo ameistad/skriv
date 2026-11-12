@@ -111,6 +111,47 @@ struct EverydayEditingTests {
         #expect(engine.register.text == "\nthree")
     }
 
+    @Test func visualVerticalMotionMatchesNeovim() {
+        var engine = VimEngine()
+        engine.reset(mode: .normal)
+        let text = "hello world\nsecond line here\nthird"
+        // The selection runs from the anchor through the same column one line down.
+        _ = engine.handle("v", text: text, caret: 5)
+        #expect(engine.handle("j", text: text, caret: 5) == .select(range: NSRange(location: 5, length: 13), caret: 17))
+        // A shorter line clamps the caret, and the original column returns afterwards.
+        #expect(engine.handle("j", text: text, caret: 5) == .select(range: NSRange(location: 5, length: 29), caret: 34))
+        #expect(engine.handle("k", text: text, caret: 5) == .select(range: NSRange(location: 5, length: 13), caret: 17))
+        #expect(engine.handle("<Esc>", text: text, caret: 5) == .move(17))
+        // `$` before entering Visual keeps following line ends.
+        #expect(engine.handle("$", text: text, caret: 0) == .move(10))
+        _ = engine.handle("v", text: text, caret: 10)
+        #expect(engine.handle("j", text: text, caret: 10) == .select(range: NSRange(location: 10, length: 19), caret: 28))
+        #expect(engine.handle("j", text: text, caret: 10) == .select(range: NSRange(location: 10, length: 24), caret: 34))
+    }
+
+    @Test func displayLineMotionsFallBackToLogicalLinesWithoutLayout() {
+        var engine = VimEngine()
+        engine.reset(mode: .normal)
+        let text = "hello world\nsecond line here\nthird"
+        _ = engine.handle("g", text: text, caret: 6)
+        #expect(engine.handle("j", text: text, caret: 6) == .move(18))
+        _ = engine.handle("2", text: text, caret: 18)
+        _ = engine.handle("g", text: text, caret: 18)
+        #expect(engine.handle("k", text: text, caret: 18) == .move(6))
+        // Characterwise as an operator motion, unlike dj.
+        _ = engine.handle("d", text: text, caret: 6)
+        _ = engine.handle("g", text: text, caret: 6)
+        #expect(engine.handle("j", text: text, caret: 6) == .edit(range: NSRange(location: 6, length: 12), replacement: "", caret: 6))
+        #expect(engine.register == VimEngine.Register(text: "world\nsecond", linewise: false))
+        // A failed motion cancels the operator.
+        _ = engine.handle("d", text: text, caret: 30)
+        _ = engine.handle("g", text: text, caret: 30)
+        #expect(engine.handle("j", text: text, caret: 30) == .move(30))
+        // Any other key after g still cancels.
+        _ = engine.handle("g", text: text, caret: 6)
+        #expect(engine.handle("x", text: text, caret: 6) == .handled)
+    }
+
     @Test func visualLineYankPositionsCursorBySelectionDirection() {
         var engine = VimEngine()
         engine.reset(mode: .normal)

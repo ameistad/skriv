@@ -21,6 +21,8 @@ final class VimTextView: NSTextView {
         didSet { updateWritingLayout() }
     }
     private var updatingWritingLayout = false
+    /// Horizontal position kept across consecutive `gj`/`gk`, valid only at `caret`.
+    private var displayColumn: (caret: Int, x: CGFloat)?
     private var exportedClipboardChangeCount: Int?
     private weak var commandStorage: NSTextStorage?
     private var commandSnapshot: String?
@@ -144,7 +146,13 @@ final class VimTextView: NSTextView {
         let oldMode = engine.mode
         observeCommandStorage()
         guard let storage = textStorage else { return false }
-        let effect = engine.handle(mapped, storage: storage.mutableString, caret: selectedRange().location)
+        var usedDisplayColumn = false
+        let effect = engine.handle(mapped, storage: storage.mutableString, caret: selectedRange().location) { [self] position, delta, allowLineEnd in
+            usedDisplayColumn = true
+            return displayLineTarget(from: position, delta: delta, allowLineEnd: allowLineEnd)
+        }
+        // Counts and the `g` prefix are still part of a pending display-line motion.
+        if !usedDisplayColumn && effect != .handled { displayColumn = nil }
         if engine.registerGeneration != oldGeneration {
             let clipboard = NSPasteboard.general
             clipboard.clearContents()
@@ -190,6 +198,73 @@ final class VimTextView: NSTextView {
         // Visual `o` can move the active endpoint without changing the selected range.
         enclosingScrollView?.verticalRulerView?.needsDisplay = true
         return true
+    }
+
+    /// `gj`/`gk`: the character at the same horizontal position `delta` display lines away.
+    private func displayLineTarget(from position: Int, delta: Int, allowLineEnd: Bool) -> Int {
+        guard delta != 0, let layout = layoutManager, let container = textContainer,
+              let text = textStorage?.mutableString else { return position }
+        let length = text.length
+        func isBreak(_ index: Int) -> Bool { text.character(at: index) == 10 || text.character(at: index) == 13 }
+        func row(at index: Int) -> (range: NSRange, rect: NSRect) {
+            var glyphs = NSRange()
+            let rect = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: index), effectiveRange: &glyphs)
+            return (layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil), rect)
+        }
+        // The empty line after a final line break, or an empty document, has no characters.
+        let endsWithBreak = length > 0 && isBreak(length - 1)
+        var current = position >= length && (length == 0 || endsWithBreak) ? nil : row(at: min(position, length - 1))
+
+        let x: CGFloat
+        if let displayColumn, displayColumn.caret == position {
+            x = displayColumn.x
+        } else if let current, position < length {
+            // Just inside the leading edge, so the same point finds this character again.
+            let glyph = layout.glyphIndexForCharacter(at: position)
+            x = current.rect.minX + layout.location(forGlyphAt: glyph).x + 0.5
+        } else {
+            x = current.map { layout.lineFragmentUsedRect(forGlyphAt: layout.glyphIndexForCharacter(at: $0.range.location), effectiveRange: nil).maxX }
+                ?? container.lineFragmentPadding
+        }
+
+        var moved = false
+        for _ in 0..<abs(delta) {
+            if delta > 0 {
+                guard let here = current else { break }
+                if NSMaxRange(here.range) < length {
+                    current = row(at: NSMaxRange(here.range))
+                } else if endsWithBreak {
+                    current = nil
+                } else {
+                    break
+                }
+            } else {
+                let start = current?.range.location ?? length
+                guard start > 0 else { break }
+                current = row(at: start - 1)
+            }
+            moved = true
+        }
+        guard moved else { return position }
+        guard let destination = current else {
+            displayColumn = (length, x)
+            return length
+        }
+
+        let range = destination.range
+        let lastCharacter = text.rangeOfComposedCharacterSequence(at: NSMaxRange(range) - 1).location
+        let upperBound: Int
+        if isBreak(NSMaxRange(range) - 1) {
+            upperBound = allowLineEnd || lastCharacter == range.location
+                ? lastCharacter : text.rangeOfComposedCharacterSequence(at: lastCharacter - 1).location
+        } else {
+            upperBound = allowLineEnd && NSMaxRange(range) == length ? length : lastCharacter
+        }
+        let glyph = layout.glyphIndex(for: NSPoint(x: x, y: destination.rect.midY), in: container)
+        var target = min(max(layout.characterIndexForGlyph(at: glyph), range.location), upperBound)
+        if target < length { target = text.rangeOfComposedCharacterSequence(at: target).location }
+        displayColumn = (target, x)
+        return target
     }
 
     func submitSearch(_ query: String, forward: Bool, count: Int = 1) {
